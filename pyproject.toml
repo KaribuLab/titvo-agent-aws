@@ -1,0 +1,21 @@
+[project]
+name = "titvo-agent-gateway"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "boto3>=1.40.59",
+    "dynamodb-json>=1.4.2",
+    "langchain>=1.0.2",
+    "langchain-anthropic>=1.0.0",
+    "langchain-google-genai>=3.0.0",
+    "langchain-mcp-adapters>=0.1.11",
+    "langchain-openai>=0.3.17",
+    "pycryptodome>=3.23.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.2",
+]

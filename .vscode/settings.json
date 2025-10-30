@@ -1,0 +1,10 @@
+{
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": "\\.py$",
+                "cmd": "${workspaceFolder}/.venv/bin/ruff --config ${workspaceFolder}/ruff.toml check --fix ${file} && ${workspaceFolder}/.venv/bin/ruff --config ${workspaceFolder}/ruff.toml format ${file}"
+            }
+        ]
+    }
+}
