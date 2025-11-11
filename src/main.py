@@ -32,18 +32,18 @@ def create_boto3_client(service_name: str) -> Any:
 
 
 async def main():
-    task_id = os.getenv("TASK_ID")
+    task_id = os.getenv("TITVO_SCAN_TASK_ID")
     LOGGER.debug("Starting the application with task id %s", task_id)
     if task_id is None:
-        raise ValueError("TASK_ID is not set")
+        raise ValueError("TITVO_SCAN_TASK_ID is not set")
     task_table_name = os.getenv("TASK_TABLE_NAME")
     LOGGER.debug("Task table name %s", task_table_name)
     if task_table_name is None:
         raise ValueError("TASK_TABLE_NAME is not set")
-    parameters_table_name = os.getenv("PARAMETERS_TABLE_NAME")
-    LOGGER.debug("Parameters table name %s", parameters_table_name)
-    if parameters_table_name is None:
-        raise ValueError("PARAMETERS_TABLE_NAME is not set")
+    config_table_name = os.getenv("CONFIG_TABLE_NAME")
+    LOGGER.debug("Config table name %s", config_table_name)
+    if config_table_name is None:
+        raise ValueError("CONFIG_TABLE_NAME is not set")
     encryption_key_name = os.getenv("ENCRYPTION_KEY_NAME")
     LOGGER.debug("Encryption key name %s", encryption_key_name)
     if encryption_key_name is None:
@@ -51,7 +51,7 @@ async def main():
     LOGGER.debug("Creating configuration provider")
     configuration_provider = AwsConfigurationAdapter(
         dynamodb_client=create_boto3_client("dynamodb"),
-        table_name=parameters_table_name,
+        table_name=config_table_name,
         encryption_service=EncryptionService(
             secrets_provider=AwsSecretsAdapter(
                 client=create_boto3_client("secretsmanager"),
