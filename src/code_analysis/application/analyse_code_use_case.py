@@ -63,13 +63,13 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Status: %s", status)
         try:
 
-            if status == AnalysisStatus.COMPLETED:
+            if status == AnalysisStatus.COMPLETED.value:
                 task.mark_completed(result, result.get("scaned_files"))
                 LOGGER.info("Marking task %s as completed", task_id)
-            elif status == AnalysisStatus.FAILED:
+            elif status == AnalysisStatus.FAILED.value:
                 task.mark_failed(result, result.get("scaned_files"))
                 LOGGER.warning("Marking task %s as failed", task_id)
-            elif status == AnalysisStatus.WARNING:
+            elif status == AnalysisStatus.WARNING.value:
                 LOGGER.error("Marking task %s as error", task_id)
                 task.mark_completed(result, result.get("scaned_files"))
             else:
