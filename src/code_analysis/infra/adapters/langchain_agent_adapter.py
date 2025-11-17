@@ -1,3 +1,4 @@
+import logging
 from enum import Enum
 from typing import List
 
@@ -17,6 +18,8 @@ from code_analysis.domain.ports.ia_agent import (
     AgentToolsFactory,
     AsyncAgentToolsFactory,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class IAProvider(Enum):
@@ -42,8 +45,28 @@ class AsyncMCPToolsFactory(AsyncAgentToolsFactory[BaseTool]):
     def __init__(self, mcp_client: MultiServerMCPClient):
         self._mcp_client = mcp_client
 
+    @staticmethod
+    def _sanitize_tool_name(name: str) -> str:
+        """
+        Sanitiza el nombre de la herramienta para que cumpla con el patrón de OpenAI.
+        Solo permite: letras, números, guiones bajos y guiones.
+        Reemplaza cualquier otro caracter con guión bajo.
+        """
+        import re
+        # Reemplazar caracteres no permitidos con guión bajo
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        # Eliminar guiones bajos consecutivos
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Eliminar guiones bajos al inicio y final
+        sanitized = sanitized.strip('_')
+        return sanitized
+
     async def create_tools(self) -> List[BaseTool]:
-        return await self._mcp_client.get_tools()
+        tools = await self._mcp_client.get_tools()
+        # Sanitizar los nombres de las herramientas
+        for tool in tools:
+            tool.name = self._sanitize_tool_name(tool.name)
+        return tools
 
 
 class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
@@ -89,9 +112,14 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
             {"messages": [{"role": message.role, "content": message.content}]},
             config={"temperature": temperature},
         )
+        LOGGER.debug("Response from agent: %s", response)
+        
+        # Obtener el último mensaje de la lista de mensajes
+        last_message = response['messages'][-1]
+        
         return AgentResponse(
-            content=response.content,
+            content=last_message.content,
             metadata={
-                "usage_metadata": response.usage_metadata,
+                "usage_metadata": last_message.usage_metadata,
             },
         )
