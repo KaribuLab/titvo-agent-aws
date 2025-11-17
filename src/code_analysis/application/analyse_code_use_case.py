@@ -1,7 +1,6 @@
+import json
 import logging
 from enum import Enum
-
-from langchain_core.output_parsers import json
 
 from code_analysis.domain.entities.task_entity import Task
 from code_analysis.domain.ports.ia_agent import AbstractAgent, AgentMessage
