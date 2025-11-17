@@ -1,7 +1,9 @@
+import logging
 from typing import Any
 
 from shared.domain.ports.secrets_provider import ISecretsProvider
 
+LOGGER = logging.getLogger(__name__)
 
 class AwsSecretsAdapter(ISecretsProvider):
     def __init__(self, client: Any, key_name: str):
@@ -9,7 +11,10 @@ class AwsSecretsAdapter(ISecretsProvider):
         self.key_name = key_name
 
     def get_secret(self) -> str | None:
-        secret = self.client.get_secret_value(SecretId=self.key_name)
-        if secret.SecretString is None:
+        response = self.client.get_secret_value(SecretId=self.key_name)
+        LOGGER.debug("Response from AWS Secrets Manager: %s", response)
+        if response["SecretString"] is None:
+            LOGGER.warning("Secret string is None")
             return None
-        return secret.SecretString
+        LOGGER.debug("Secret string: %s", response["SecretString"])
+        return response["SecretString"]
