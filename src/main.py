@@ -63,7 +63,7 @@ async def main():
     LOGGER.debug("MCP server url %s", mcp_server_url)
     if mcp_server_url is None:
         raise ValueError("mcp_server_url is not set")
-    system_prompt = configuration_provider.get_value("system_prompt")
+    system_prompt = configuration_provider.get_value("scan_system_prompt")
     LOGGER.debug("System prompt %s", system_prompt)
     if system_prompt is None:
         raise ValueError("system_prompt is not set")
@@ -94,11 +94,12 @@ async def main():
         ia_api_key=ia_api_key,
     )
     tools_factory = AsyncMCPToolsFactory(
-        mcp_client=MultiServerMCPClient(
-            server_urls=[
-                mcp_server_url,
-            ],
-        ),
+        mcp_client=MultiServerMCPClient({
+            "titvo-mcp-server": {
+                "transport": "streamable_http",
+                "url": mcp_server_url,
+            },
+        }),
     )
     agent = LangchainAgent(
         system_prompt=system_prompt,
