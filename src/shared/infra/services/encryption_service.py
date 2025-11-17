@@ -24,7 +24,7 @@ class EncryptionService(IEncryptionService):
         secret = self.secrets_provider.get_secret()
         if secret is None:
             raise ValueError("Encryption key not found")
-        key = b64decode(self.secret)
+        key = b64decode(secret)
         cipher = AES.new(key, AES.MODE_ECB)
         decrypted_data = unpad(cipher.decrypt(b64decode(value)), AES.block_size)
         return decrypted_data.decode("utf-8")
