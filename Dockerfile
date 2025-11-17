@@ -1,17 +1,14 @@
-FROM python:3.13-alpine AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-alpine AS builder
 
 COPY . /app
 
 WORKDIR /app
 
-RUN apk add curl && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    source $HOME/.local/bin/env && \
-    uv sync
+RUN uv sync --frozen --no-dev
 
 FROM python:3.13-alpine
 
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /app/.venv/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /app /app
 
 WORKDIR /app
