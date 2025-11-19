@@ -53,12 +53,13 @@ class AsyncMCPToolsFactory(AsyncAgentToolsFactory[BaseTool]):
         Reemplaza cualquier otro caracter con guión bajo.
         """
         import re
+
         # Reemplazar caracteres no permitidos con guión bajo
-        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
         # Eliminar guiones bajos consecutivos
-        sanitized = re.sub(r'_+', '_', sanitized)
+        sanitized = re.sub(r"_+", "_", sanitized)
         # Eliminar guiones bajos al inicio y final
-        sanitized = sanitized.strip('_')
+        sanitized = sanitized.strip("_")
         return sanitized
 
     async def create_tools(self) -> List[BaseTool]:
@@ -109,14 +110,19 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
         self, message: AgentMessage, temperature: float = 0.0
     ) -> AgentResponse:
         response = await self.__agent.ainvoke(
-            {"messages": [{"role": message.role, "content": message.content}]},
+            {
+                "messages": [
+                    {"role": message.role, "content": message.content},
+                    {"role": "assistant", "content": "{"},
+                ]
+            },
             config={"temperature": temperature},
         )
         LOGGER.debug("Response from agent: %s", response)
-        
+
         # Obtener el último mensaje de la lista de mensajes
-        last_message = response['messages'][-1]
-        
+        last_message = response["messages"][-1]
+
         return AgentResponse(
             content=last_message.content,
             metadata={
