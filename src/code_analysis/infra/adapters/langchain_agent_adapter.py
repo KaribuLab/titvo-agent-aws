@@ -113,7 +113,6 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
             {
                 "messages": [
                     {"role": message.role, "content": message.content},
-                    {"role": "assistant", "content": "{"},
                 ]
             },
             config={"temperature": temperature},
