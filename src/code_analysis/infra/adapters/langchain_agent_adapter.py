@@ -115,7 +115,7 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
                     {"role": message.role, "content": message.content},
                 ]
             },
-            config={"temperature": temperature},
+            config={"temperature": temperature, "recursion_limit": 100},
         )
         LOGGER.debug("Response from agent: %s", response)
 
