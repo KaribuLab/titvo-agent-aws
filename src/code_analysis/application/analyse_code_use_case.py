@@ -34,6 +34,19 @@ class AnalyseCodeUseCase:
         self.agent = agent
         self.content_template = content_template
 
+    def __sanitize_content_response(self, content: str) -> str:
+        # Check if content is wrapped in ```json and ```
+        content_stripped = content.strip()
+        if content_stripped.startswith("```json"):
+            # Remove the first ```json match
+            content = content_stripped.replace("```json", "", 1).strip()
+            # Verify it ends with ``` before removing (safety check)
+            if content.endswith("```"):
+                # Remove the last ``` from the end (last 3 characters)
+                content = content[:-3].strip()
+            return content
+        return content
+
     async def execute(self, task_id: str) -> Task:
         LOGGER.info("Executing analyse code use case with task id %s", task_id)
         task = self.task_repository.get_task(task_id)
@@ -58,7 +71,14 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Sending message to agent: %s", message.content)
         agent_response = await self.agent.invoke(message)
         LOGGER.debug("Agent response: %s", agent_response.content)
+        agent_response.content = self.__sanitize_content_response(
+            agent_response.content
+        )
+        LOGGER.debug("Sanitized agent response: %s", agent_response.content)
         result = json.loads(agent_response.content)
+        # Remove issues from result if exists
+        if "issues" in result:
+            result.pop("issues")
         status = result.get("status")
         LOGGER.debug("Status: %s", status)
         try:
