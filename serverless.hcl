@@ -13,7 +13,7 @@ locals {
   }
   provider_version = "6.7.0"
   parameter_path   = "/tvo/security-scan"
-  service_name     = "titvo-agent"
+  service_name     = "tvo-agent"
   service_bucket   = "${local.service_name}-${local.region}${local.bucket_suffix}"
   log_retention    = 7
   tags_file_path   = "${get_terragrunt_dir()}/common_tags.json"
