@@ -24,49 +24,42 @@ dependency parameters {
   config_path = "${get_parent_terragrunt_dir()}/aws/ssm/lookup"
   mock_outputs = {
     parameters = {
-      "/tvo/security-scan/test/infra/vpc-id"                          = "vpc-000000000000000"
-      "/tvo/security-scan/test/infra/subnet1"                         = "subnet-0c4b3b6b1b7b3b3b3"
-      "/tvo/security-scan/test/infra/dynamo-task-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-test"
-      "/tvo/security-scan/test/infra/dynamo-repository-table-arn"     = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-repository-table-test"
-      "/tvo/security-scan/test/infra/dynamo-hint-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-hint-table-test"
-      "/tvo/security-scan/test/infra/dynamo-cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-test"
-      "/tvo/security-scan/test/infra/dynamo-prompt-table-arn"         = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-prompt-table-test"
-      "/tvo/security-scan/test/infra/dynamo-cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-test"
-      "/tvo/security-scan/test/infra/dynamo-configuration-table-name" = "tvo-configuration-table"
-      "/tvo/security-scan/test/infra/dynamo-configuration-table-arn"  = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-test"
+      "/tvo/security-scan/test/infra/vpc/vpc_id"                      = "vpc-000000000000000"
+      "/tvo/security-scan/test/infra/vpc/subnet/private/subnets_id"   = "[\"subnet-0c4b3b6b1b7b3b3b3\"]"
+      "/tvo/security-scan/test/infra/dynamo/task-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-test"
+      "/tvo/security-scan/test/infra/dynamo/repository-table-arn"     = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-repository-table-test"
+      "/tvo/security-scan/test/infra/dynamo/prompt-table-arn"         = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-hint-table-test"
+      "/tvo/security-scan/test/infra/dynamo/cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-test"
+      "/tvo/security-scan/test/infra/dynamo/cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-test"
+      "/tvo/security-scan/test/infra/dynamo/parameter-table-name"     = "tvo-configuration-table"
+      "/tvo/security-scan/test/infra/dynamo/parameter-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-test"
       "/tvo/security-scan/test/infra/encryption-key-name"             = "/tvo/security-scan/test/infra/encryption-key"
-      "/tvo/security-scan/test/infra/cli-files-bucket-arn"            = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/test/infra/dynamo-hint-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-hint-table-test"
-      "/tvo/security-scan/test/infra/dynamo-cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-test"
-      "/tvo/security-scan/test/infra/dynamo-task-table-name"          = "tvo-github-security-scan-task-table-test"
-      "/tvo/security-scan/test/infra/cli-files-bucket-name"           = "devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/test/infra/report-bucket-arn"               = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/prod/infra/vpc-id"                          = "vpc-000000000000000"
-      "/tvo/security-scan/prod/infra/subnet1"                         = "subnet-0c4b3b6b1b7b3b3b3"
-      "/tvo/security-scan/prod/infra/dynamo-task-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-repository-table-arn"     = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-repository-table-prod"
+      "/tvo/security-scan/test/infra/s3/cli-files/bucket_arn"         = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/test/infra/dynamo/task-table-name"          = "tvo-github-security-scan-task-table-test"
+      "/tvo/security-scan/test/infra/s3/cli-files/bucket_name"        = "devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/test/infra/s3/reports/bucket_arn"           = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/prod/infra/vpc/vpc_id"                      = "vpc-000000000000000"
+      "/tvo/security-scan/prod/infra/vpc/subnet/private/subnets_id"   = "[\"subnet-0c4b3b6b1b7b3b3b3\"]"
+      "/tvo/security-scan/prod/infra/dynamo/task-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-prod"
+      "/tvo/security-scan/prod/infra/dynamo/repository-table-arn"     = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-repository-table-prod"
       "/tvo/security-scan/prod/infra/secret-manager-arn"              = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/prod",
-      "/tvo/security-scan/prod/infra/report-bucket-arn"               = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/prod/infra/dynamo-cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-prompt-table-arn"         = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-prompt-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-configuration-table-name" = "tvo-configuration-table"
-      "/tvo/security-scan/prod/infra/dynamo-configuration-table-arn"  = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-prod"
+      "/tvo/security-scan/prod/infra/s3/reports/bucket_arn"           = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/prod/infra/dynamo/cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-prod"
+      "/tvo/security-scan/prod/infra/dynamo/cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-prod"
+      "/tvo/security-scan/prod/infra/dynamo/prompt-table-arn"         = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-prompt-table-prod"
+      "/tvo/security-scan/prod/infra/dynamo/parameter-table-name"     = "tvo-configuration-table"
+      "/tvo/security-scan/prod/infra/dynamo/parameter-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-prod"
       "/tvo/security-scan/prod/infra/encryption-key-name"             = "/tvo/security-scan/prod/infra/encryption-key"
-      "/tvo/security-scan/prod/infra/cli-files-bucket-arn"            = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/prod/infra/dynamo-hint-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-hint-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-prod"
-      "/tvo/security-scan/prod/infra/dynamo-task-table-name"          = "tvo-github-security-scan-task-table-prod"
-      "/tvo/security-scan/prod/infra/cli-files-bucket-name"           = "devsecops-titvo-com-report-bucket"
-      "/tvo/security-scan/prod/infra/dynamo-hint-table-name"          = "tvo-github-security-scan-hint-table-prod"
+      "/tvo/security-scan/prod/infra/s3/cli-files/bucket_arn"         = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/prod/infra/dynamo/task-table-name"          = "tvo-github-security-scan-task-table-prod"
+      "/tvo/security-scan/prod/infra/s3/cli-files/bucket_name"        = "devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/prod/infra/dynamo/prompt-table-name"        = "tvo-github-security-scan-hint-table-prod"
     }
   }
 }
 
 inputs = {
-  subnet_ids = [
-    dependency.parameters.outputs.parameters["${local.base_path}/infra/subnet1"],
-  ]
+  subnet_ids          = jsondecode(dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc/subnet/private/subnets_id"])
   name               = local.batch_name
   common_tags        = local.common_tags
   ecr_repository_url = dependency.ecr.outputs.ecr_repository_url
@@ -74,27 +67,27 @@ inputs = {
   job_vcpu           = 2
   job_memory         = 4096
   job_command        = ["python", "/app/container_runner.py"]
-  vpc_id             = dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc-id"]
+  vpc_id             = dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc/vpc_id"]
   job_environment = [
     {
       name : "TITVO_DYNAMO_TASK_TABLE_NAME",
-      value : dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-task-table-name"]
+      value : dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/task-table-name"]
     },
     {
       name  = "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-configuration-table-name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/parameter-table-name"]
     },
     {
       name  = "TITVO_DYNAMO_HINT_TABLE_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-hint-table-name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/prompt-table-name"]
     },
     {
       name  = "TITVO_DYNAMO_CLI_FILES_TABLE_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-cli-files-table-name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/cli-files-table-name"]
     },
     {
       name  = "TITVO_DYNAMO_CLI_FILES_BUCKET_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/cli-files-bucket-name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_name"]
     },
     {
       name  = "TITVO_ENCRYPTION_KEY_NAME"
@@ -115,7 +108,7 @@ inputs = {
           "dynamodb:UpdateItem",
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-task-table-arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/task-table-arn"],
         ]
       },
       {
@@ -124,8 +117,8 @@ inputs = {
           "dynamodb:GetItem",
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-repository-table-arn"],
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-configuration-table-arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/repository-table-arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/parameter-table-arn"],
         ]
       },
       {
@@ -134,8 +127,8 @@ inputs = {
           "dynamodb:Query"
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-cli-files-table-arn"],
-          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo-cli-files-table-arn"]}/index/*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/cli-files-table-arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/cli-files-table-arn"]}/index/*"
         ]
       },
       {
@@ -146,8 +139,8 @@ inputs = {
           "s3:ListBucket"
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/cli-files-bucket-arn"],
-          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/cli-files-bucket-arn"]}/*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_arn"]}/*"
         ]
       },
       {
@@ -167,8 +160,8 @@ inputs = {
           "s3:PutObjectTagging"
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/report-bucket-arn"],
-          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/report-bucket-arn"]}/*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/reports/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/reports/bucket_arn"]}/*"
         ]
       }
     ]
