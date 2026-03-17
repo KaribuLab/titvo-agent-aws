@@ -33,7 +33,7 @@ dependency parameters {
       "/tvo/security-scan/test/infra/dynamo/cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-test"
       "/tvo/security-scan/test/infra/dynamo/parameter-table-name"     = "tvo-configuration-table"
       "/tvo/security-scan/test/infra/dynamo/parameter-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-test"
-      "/tvo/security-scan/test/infra/encryption-key-name"             = "/tvo/security-scan/test/infra/encryption-key"
+      "/tvo/security-scan/test/infra/kms/encryption-key-name"             = "/tvo/security-scan/test/infra/encryption-key"
       "/tvo/security-scan/test/infra/s3/cli-files/bucket_arn"         = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
       "/tvo/security-scan/test/infra/dynamo/task-table-name"          = "tvo-github-security-scan-task-table-test"
       "/tvo/security-scan/test/infra/s3/cli-files/bucket_name"        = "devsecops-titvo-com-report-bucket"
@@ -42,14 +42,14 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/vpc/subnet/private/subnets_id"   = "[\"subnet-0c4b3b6b1b7b3b3b3\"]"
       "/tvo/security-scan/prod/infra/dynamo/task-table-arn"           = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-prod"
       "/tvo/security-scan/prod/infra/dynamo/repository-table-arn"     = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-repository-table-prod"
-      "/tvo/security-scan/prod/infra/secret-manager-arn"              = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/prod",
+      "/tvo/security-scan/prod/infra/secret/manager/arn"              = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/prod",
       "/tvo/security-scan/prod/infra/s3/reports/bucket_arn"           = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
       "/tvo/security-scan/prod/infra/dynamo/cli-files-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-cli-files-table-prod"
       "/tvo/security-scan/prod/infra/dynamo/cli-files-table-name"     = "tvo-github-security-scan-cli-files-table-prod"
       "/tvo/security-scan/prod/infra/dynamo/prompt-table-arn"         = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-prompt-table-prod"
       "/tvo/security-scan/prod/infra/dynamo/parameter-table-name"     = "tvo-configuration-table"
       "/tvo/security-scan/prod/infra/dynamo/parameter-table-arn"      = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-configuration-table-prod"
-      "/tvo/security-scan/prod/infra/encryption-key-name"             = "/tvo/security-scan/prod/infra/encryption-key"
+      "/tvo/security-scan/prod/infra/kms/encryption-key-name"             = "/tvo/security-scan/prod/infra/encryption-key"
       "/tvo/security-scan/prod/infra/s3/cli-files/bucket_arn"         = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
       "/tvo/security-scan/prod/infra/dynamo/task-table-name"          = "tvo-github-security-scan-task-table-prod"
       "/tvo/security-scan/prod/infra/s3/cli-files/bucket_name"        = "devsecops-titvo-com-report-bucket"
@@ -91,7 +91,7 @@ inputs = {
     },
     {
       name  = "TITVO_ENCRYPTION_KEY_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/encryption-key-name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/kms/encryption-key-name"]
     },
     {
       name  = "TITVO_LOG_LEVEL"
