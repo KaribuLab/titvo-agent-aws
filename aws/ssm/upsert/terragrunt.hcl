@@ -37,28 +37,28 @@ inputs = {
   tags           = local.common_tags
   parameters = [
     {
-      path        = "agent-name"
+      path        = "batch/agent/job_definition_name"
       type        = "String"
       tier        = "Standard"
       description = "Security Scan Batch Name"
       value       = dependency.batch.outputs.job_definition_name
     },
     {
-      path        = "agent-arn"
+      path        = "batch/agent/job_definition_arn"
       type        = "String"
       tier        = "Standard"
       description = "Security Scan Batch ARN"
       value       = join(":", slice(split(":", dependency.batch.outputs.job_definition_arn), 0, length(split(":", dependency.batch.outputs.job_definition_arn)) - 1))
     },
     {
-      path        = "agent-job-queue-arn"
+      path        = "batch/agent/job_queue_arn"
       type        = "String"
       tier        = "Standard"
       description = "Security Scan Job Queue ARN"
       value       = dependency.batch.outputs.job_queue_arn
     },
     {
-      path        = "agent-job-queue-name"
+      path        = "batch/agent/job_queue_name"
       type        = "String"
       tier        = "Standard"
       description = "Security Scan Job Queue Name"

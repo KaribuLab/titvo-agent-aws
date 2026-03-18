@@ -10,7 +10,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 
-from code_analysis.domain.ports.ia_agent import (
+from code_analysis.domain.ports.ai_agent import (
     AbstractAgent,
     AgentMessage,
     AgentModelFactory,
@@ -22,21 +22,21 @@ from code_analysis.domain.ports.ia_agent import (
 LOGGER = logging.getLogger(__name__)
 
 
-class IAProvider(Enum):
+class AIProvider(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
 
     @classmethod
-    def from_string(cls, ia_provider: str) -> "IAProvider":
-        if ia_provider == "openai":
+    def from_string(cls, ai_provider: str) -> "AIProvider":
+        if ai_provider == "openai":
             return cls.OPENAI
-        elif ia_provider == "anthropic":
+        elif ai_provider == "anthropic":
             return cls.ANTHROPIC
-        elif ia_provider == "google":
+        elif ai_provider == "google":
             return cls.GOOGLE
         else:
-            raise ValueError(f"Invalid IA provider: {ia_provider}")
+            raise ValueError(f"Invalid AI provider: {ai_provider}")
 
 
 class AsyncMCPToolsFactory(AsyncAgentToolsFactory[BaseTool]):
@@ -71,20 +71,20 @@ class AsyncMCPToolsFactory(AsyncAgentToolsFactory[BaseTool]):
 
 
 class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
-    def __init__(self, ia_provider: str, ia_model: str, ia_api_key: str):
-        self._ia_provider = ia_provider
-        self._ia_model = ia_model
-        self._ia_api_key = ia_api_key
+    def __init__(self, ai_provider: str, ai_model: str, ai_api_key: str):
+        self._ai_provider = ai_provider
+        self._ai_model = ai_model
+        self._ai_api_key = ai_api_key
 
     def create_model(self) -> BaseChatModel:
-        provider = IAProvider.from_string(self._ia_provider)
-        if provider == IAProvider.OPENAI:
-            return ChatOpenAI(model=self._ia_model, api_key=self._ia_api_key)
-        elif provider == IAProvider.ANTHROPIC:
-            return ChatAnthropic(model=self._ia_model, api_key=self._ia_api_key)
-        elif provider == IAProvider.GOOGLE:
+        provider = AIProvider.from_string(self._ai_provider)
+        if provider == AIProvider.OPENAI:
+            return ChatOpenAI(model=self._ai_model, api_key=self._ai_api_key)
+        elif provider == AIProvider.ANTHROPIC:
+            return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
+        elif provider == AIProvider.GOOGLE:
             return ChatGoogleGenerativeAI(
-                model=self._ia_model, api_key=self._ia_api_key
+                model=self._ai_model, api_key=self._ai_api_key
             )
 
 

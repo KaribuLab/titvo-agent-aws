@@ -71,27 +71,27 @@ async def main():
     LOGGER.debug("Content template %s", content_template)
     if content_template is None:
         raise ValueError("content_template is not set")
-    ia_provider = configuration_provider.get_value("ia_provider")
-    LOGGER.debug("IA provider %s", ia_provider)
-    if ia_provider is None:
-        raise ValueError("ia_provider is not set")
-    ia_model = configuration_provider.get_value("ia_model")
-    LOGGER.debug("IA model %s", ia_model)
-    if ia_model is None:
-        raise ValueError("ia_model is not set")
-    ia_api_key = configuration_provider.get_secret("ia_api_key")
-    LOGGER.debug("IA API key %s", ia_api_key)
-    if ia_api_key is None:
-        raise ValueError("ia_api_key is not set")
+    ai_provider = configuration_provider.get_value("ai_provider")
+    LOGGER.debug("AI provider %s", ai_provider)
+    if ai_provider is None:
+        raise ValueError("ai_provider is not set")
+    ai_model = configuration_provider.get_value("ai_model")
+    LOGGER.debug("AI model %s", ai_model)
+    if ai_model is None:
+        raise ValueError("ai_model is not set")
+    ai_api_key = configuration_provider.get_secret("ai_api_key")
+    LOGGER.debug("AI API key %s", ai_api_key)
+    if ai_api_key is None:
+        raise ValueError("ai_api_key is not set")
     task_repository = DynamoTaskRepository(
         dynamo_client=create_boto3_client("dynamodb"),
         table_name=task_table_name,
     )
 
     model_factory = LangchainAgentModelFactory(
-        ia_provider=ia_provider,
-        ia_model=ia_model,
-        ia_api_key=ia_api_key,
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        ai_api_key=ai_api_key,
     )
     tools_factory = AsyncMCPToolsFactory(
         mcp_client=MultiServerMCPClient({
