@@ -1,9 +1,5 @@
 terraform {
   source = "git::https://github.com/KaribuLab/terraform-aws-parameter-upsert.git?ref=v0.5.6"
-  extra_arguments "disable_backend" {
-    commands  = ["init"]
-    arguments = ["-backend=false"]
-  }
 }
 
 locals {
@@ -30,22 +26,9 @@ dependency "ecr" {
   }
 }
 
-generate "provider" {
-  path      = "provider.tf"
-  if_exists = "overwrite_terragrunt"
-  contents  = <<EOF
-  terraform {
-    required_providers {
-      aws = {
-        source  = "hashicorp/aws"
-        version = "${local.serverless.locals.provider_version}"
-      }
-    }
-  }
-  provider "aws" {
-    region = "${local.serverless.locals.region}"
-  }
-EOF
+
+include {
+  path = find_in_parent_folders()
 }
 
 inputs = {
