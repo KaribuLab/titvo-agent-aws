@@ -14,22 +14,19 @@ include {
 
 inputs = {
   name                 = local.registry_name
-  image_tag_mutability = "MUTABLE"
   lifecycle_policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Keep last 10 images"
-        action = {
-          type = "expire"
-        },
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 10
-        }
+    rules = [{
+      rulePriority = 1
+      description  = "Keep only the last 10 images"
+      action = {
+        type = "expire"
       }
-    ]
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 10
+      }
+    }]
   })
   tags = merge(local.common_tags, {
     Name = local.registry_name
