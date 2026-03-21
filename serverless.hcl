@@ -17,7 +17,8 @@ locals {
   service_bucket   = "${local.service_name}-${local.region}${local.bucket_suffix}"
   log_retention    = 7
   tags_file_path   = "${get_terragrunt_dir()}/common_tags.json"
-  common_tags = fileexists(local.tags_file_path) ? jsondecode(file(local.tags_file_path)) : {
-    Project = "Titvo Agent"
-  }
+  common_tags = merge(
+    { Project = "Titvo" },
+    fileexists(local.tags_file_path) ? jsondecode(file(local.tags_file_path)) : {}
+  )
 }
