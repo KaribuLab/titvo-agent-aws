@@ -10,7 +10,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 
-from code_analysis.domain.ports.ai_agent import (
+from code_analysis.domain.ports.ia_agent import (
     AbstractAgent,
     AgentMessage,
     AgentModelFactory,
