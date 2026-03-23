@@ -78,18 +78,6 @@ inputs = {
       value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/parameter-table-name"]
     },
     {
-      name  = "TITVO_DYNAMO_HINT_TABLE_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/prompt-table-name"]
-    },
-    {
-      name  = "TITVO_DYNAMO_CLI_FILES_TABLE_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/cli-files-table-name"]
-    },
-    {
-      name  = "TITVO_DYNAMO_CLI_FILES_BUCKET_NAME"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_name"]
-    },
-    {
       name  = "TITVO_ENCRYPTION_KEY_NAME"
       value = dependency.parameters.outputs.parameters["${local.base_path}/infra/kms/encryption-key-name"]
     },
