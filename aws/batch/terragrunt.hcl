@@ -66,7 +66,7 @@ inputs = {
   max_vcpus          = 16
   job_vcpu           = 2
   job_memory         = 4096
-  job_command        = ["python", "/app/container_runner.py"]
+  job_command        = ["python", "src/main.py"]
   vpc_id             = dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc/vpc_id"]
   job_environment = [
     {
