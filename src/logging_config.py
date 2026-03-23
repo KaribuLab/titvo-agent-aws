@@ -16,6 +16,6 @@ config = {
     },
     "root": {
         "handlers": ["console"],
-        "level": os.getenv("LOG_LEVEL", "INFO"),
+        "level": os.getenv("TITVO_LOG_LEVEL", "INFO"),
     },
 }

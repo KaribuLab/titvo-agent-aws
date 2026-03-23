@@ -36,18 +36,18 @@ async def main():
     LOGGER.debug("Starting the application with task id %s", task_id)
     if task_id is None:
         raise ValueError("TITVO_SCAN_TASK_ID is not set")
-    task_table_name = os.getenv("TASK_TABLE_NAME")
+    task_table_name = os.getenv("TITVO_DYNAMO_TASK_TABLE_NAME")
     LOGGER.debug("Task table name %s", task_table_name)
     if task_table_name is None:
-        raise ValueError("TASK_TABLE_NAME is not set")
-    config_table_name = os.getenv("CONFIG_TABLE_NAME")
+        raise ValueError("TITVO_DYNAMO_TASK_TABLE_NAME is not set")
+    config_table_name = os.getenv("TITVO_DYNAMO_CONFIGURATION_TABLE_NAME")
     LOGGER.debug("Config table name %s", config_table_name)
     if config_table_name is None:
-        raise ValueError("CONFIG_TABLE_NAME is not set")
-    encryption_key_name = os.getenv("ENCRYPTION_KEY_NAME")
+        raise ValueError("TITVO_DYNAMO_CONFIGURATION_TABLE_NAME is not set")
+    encryption_key_name = os.getenv("TITVO_ENCRYPTION_KEY_NAME")
     LOGGER.debug("Encryption key name %s", encryption_key_name)
     if encryption_key_name is None:
-        raise ValueError("ENCRYPTION_KEY_NAME is not set")
+        raise ValueError("TITVO_ENCRYPTION_KEY_NAME is not set")
     LOGGER.debug("Creating configuration provider")
     configuration_provider = AwsConfigurationAdapter(
         dynamodb_client=create_boto3_client("dynamodb"),
