@@ -15,6 +15,7 @@ dependency "batch" {
     job_definition_name = "agent-name"
     job_queue_arn       = "arn:aws:batch:us-east-1:012345678901:job-queue/agent-job-queue-arn"
     job_queue_name      = "agent-job-queue-name"
+    security_group_id   = "sg-123131231321"
   }
 }
 
@@ -63,6 +64,13 @@ inputs = {
       tier        = "Standard"
       description = "Security Scan Job Queue Name"
       value       = dependency.batch.outputs.job_queue_name
+    },
+    {
+      path        = "batch/agent/security_group_id"
+      type        = "String"
+      tier        = "Standard"
+      description = "Security Scan Security Group ID"
+      value       = dependency.batch.outputs.security_group_id
     },
     {
       path        = "ecr-registry-url"

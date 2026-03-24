@@ -13,7 +13,7 @@ include {
 }
 
 inputs = {
-  name                 = local.registry_name
+  name = local.registry_name
   lifecycle_policy = jsonencode({
     rules = [{
       rulePriority = 1
