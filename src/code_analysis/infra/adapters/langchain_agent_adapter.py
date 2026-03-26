@@ -127,8 +127,20 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
         # Obtener el último mensaje de la lista de mensajes
         last_message = response["messages"][-1]
 
+        # Manejar content como string o lista (Responses API devuelve lista)
+        content = last_message.content
+        if isinstance(content, list):
+            # Extraer texto de los bloques de contenido
+            text_parts = []
+            for block in content:
+                if isinstance(block, str):
+                    text_parts.append(block)
+                elif isinstance(block, dict) and "text" in block:
+                    text_parts.append(block["text"])
+            content = "".join(text_parts)
+
         return AgentResponse(
-            content=last_message.content,
+            content=content,
             metadata={
                 "usage_metadata": last_message.usage_metadata,
             },
