@@ -78,8 +78,13 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
 
     def create_model(self) -> BaseChatModel:
         provider = AIProvider.from_string(self._ai_provider)
+        LOGGER.info("Using provider=%s, model=%s", provider.value, self._ai_model)
         if provider == AIProvider.OPENAI:
-            return ChatOpenAI(model=self._ai_model, api_key=self._ai_api_key)
+            return ChatOpenAI(
+                model=self._ai_model,
+                api_key=self._ai_api_key,
+                use_responses_api=True,
+            )
         elif provider == AIProvider.ANTHROPIC:
             return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
         elif provider == AIProvider.GOOGLE:
