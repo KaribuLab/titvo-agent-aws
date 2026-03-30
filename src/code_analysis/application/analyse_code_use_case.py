@@ -76,11 +76,12 @@ class AnalyseCodeUseCase:
         )
         LOGGER.debug("Sanitized agent response: %s", agent_response.content)
         result = json.loads(agent_response.content)
+        LOGGER.info("Result: %s", result)
         # Remove issues from result if exists
         if "issues" in result:
             result.pop("issues")
         status = result.get("status")
-        LOGGER.debug("Status: %s", status)
+        LOGGER.info("Status: %s", status)
         try:
 
             if status == AnalysisStatus.COMPLETED.value:
