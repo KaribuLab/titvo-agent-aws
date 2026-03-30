@@ -83,7 +83,7 @@ inputs = {
     },
     {
       name  = "TITVO_LOG_LEVEL"
-      value = "DEBUG" # TODO: Remove this
+      value = "INFO"
     }
   ]
   job_policy = jsonencode({
