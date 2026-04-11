@@ -14,6 +14,23 @@ config = {
             "formatter": "standard",
         },
     },
+    "loggers": {
+        "botocore": {
+            "level": "WARNING",
+            "handlers": ["console"],
+            "propagate": False,
+        },
+        "boto3": {
+            "level": "WARNING",
+            "handlers": ["console"],
+            "propagate": False,
+        },
+        "urllib3": {
+            "level": "WARNING",
+            "handlers": ["console"],
+            "propagate": False,
+        },
+    },
     "root": {
         "handlers": ["console"],
         "level": os.getenv("TITVO_LOG_LEVEL", "INFO"),
