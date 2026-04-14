@@ -54,6 +54,12 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/dynamo/task-table-name"      = "tvo-github-security-scan-task-table-prod"
       "/tvo/security-scan/prod/infra/s3/cli-files/bucket_name"    = "devsecops-titvo-com-report-bucket"
       "/tvo/security-scan/prod/infra/dynamo/prompt-table-name"    = "tvo-github-security-scan-hint-table-prod"
+      "/tvo/security-scan/prod/infra/lambda/bitbucket-code-insights-name" = "tvo-mcp-bitbucket-code-insights-lambda-prod"
+      "/tvo/security-scan/prod/infra/lambda/bitbucket-code-insights-arn"  = "arn:aws:lambda:us-east-1:000000000000:function:tvo-mcp-bitbucket-code-insights-lambda-prod"
+      "/tvo/security-scan/prod/infra/lambda/github-issue-name"            = "tvo-mcp-github-issue-lambda-prod"
+      "/tvo/security-scan/prod/infra/lambda/github-issue-arn"             = "arn:aws:lambda:us-east-1:000000000000:function:tvo-mcp-github-issue-lambda-prod"
+      "/tvo/security-scan/prod/infra/lambda/issue-report-name"          = "tvo-mcp-issue-report-lambda-prod"
+      "/tvo/security-scan/prod/infra/lambda/issue-report-arn"           = "arn:aws:lambda:us-east-1:000000000000:function:tvo-mcp-issue-report-lambda-prod"
     }
   }
 }
@@ -80,6 +86,18 @@ inputs = {
     {
       name  = "TITVO_ENCRYPTION_KEY_NAME"
       value = dependency.parameters.outputs.parameters["${local.base_path}/infra/kms/encryption-key-name"]
+    },
+    {
+      name  = "TITVO_BITBUCKET_CODE_INSIGHTS_FUNCTION_NAME"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/bitbucket-code-insights-name"]
+    },
+    {
+      name  = "TITVO_GITHUB_ISSUE_FUNCTION_NAME"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/github-issue-name"]
+    },
+    {
+      name  = "TITVO_REPORT_FUNCTION_NAME"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/issue-report-name"]
     },
     {
       name  = "TITVO_LOG_LEVEL"
@@ -150,6 +168,17 @@ inputs = {
         "Resource" : [
           dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/reports/bucket_arn"],
           "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/reports/bucket_arn"]}/*"
+        ]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "lambda:InvokeFunction"
+        ],
+        "Resource" : [
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/bitbucket-code-insights-arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/github-issue-arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/issue-report-arn"]
         ]
       }
     ]
