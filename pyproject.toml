@@ -13,6 +13,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.1.11",
     "langchain-openai>=0.3.17",
     "pycryptodome>=3.23.0",
+    "langfuse>=3.8.0",
 ]
 
 [dependency-groups]

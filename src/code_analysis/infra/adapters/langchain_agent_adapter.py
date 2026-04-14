@@ -1,6 +1,6 @@
 import logging
 from enum import Enum
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from langchain.agents import create_agent
 from langchain_anthropic import ChatAnthropic
@@ -9,6 +9,7 @@ from langchain_core.tools import BaseTool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
+from langfuse.langchain import CallbackHandler
 
 from code_analysis.domain.ports.ia_agent import (
     AbstractAgent,
@@ -99,9 +100,13 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
         system_prompt: str,
         model_factory: AgentModelFactory[BaseChatModel],
         tools_factory: AgentToolsFactory[BaseTool] | AsyncAgentToolsFactory[BaseTool],
+        langfuse_callback_handler: Optional[CallbackHandler],
+        langfuse_metadata: Optional[Dict[str, Any]],
     ):
         super().__init__(system_prompt, model_factory, tools_factory)
         self.__agent = None
+        self.__langfuse_callback_handler = langfuse_callback_handler
+        self.__langfuse_metadata = langfuse_metadata
 
     async def _initialize(self, model: BaseChatModel, tools: List[BaseTool]) -> None:
         if self.__agent is None:
@@ -114,13 +119,20 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
     async def _invoke_wrapped(
         self, message: AgentMessage, temperature: float = 0.0
     ) -> AgentResponse:
+        config = {"temperature": temperature, "recursion_limit": 100}
+        if (
+            self.__langfuse_callback_handler is not None
+            and self.__langfuse_metadata is not None
+        ):
+            config["callbacks"] = [self.__langfuse_callback_handler]
+            config["metadata"] = self.__langfuse_metadata
         response = await self.__agent.ainvoke(
             {
                 "messages": [
                     {"role": message.role, "content": message.content},
                 ]
             },
-            config={"temperature": temperature, "recursion_limit": 100},
+            config=config,
         )
         LOGGER.debug("Response from agent: %s", response)
 

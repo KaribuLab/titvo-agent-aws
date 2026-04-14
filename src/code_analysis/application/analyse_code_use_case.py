@@ -1,18 +1,13 @@
 import json
 import logging
-from enum import Enum
 
+from code_analysis.domain.dto.result_dto import AnalysisStatus, ResultDto
 from code_analysis.domain.entities.task_entity import Task
+from code_analysis.domain.notification_service import NotificationService
 from code_analysis.domain.ports.ia_agent import AbstractAgent, AgentMessage
 from code_analysis.domain.ports.task_repository import ITaskRepository
 
 LOGGER = logging.getLogger(__name__)
-
-
-class AnalysisStatus(Enum):
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    WARNING = "WARNING"
 
 
 class AnalyseCodeUseCase:
@@ -28,11 +23,13 @@ class AnalyseCodeUseCase:
         self,
         task_repository: ITaskRepository,
         agent: AbstractAgent,
+        notification_service: NotificationService,
         content_template: str,
     ):
         self.task_repository = task_repository
         self.agent = agent
         self.content_template = content_template
+        self.notification_service = notification_service
 
     def __sanitize_content_response(self, content: str) -> str:
         # Check if content is wrapped in ```json and ```
@@ -77,11 +74,21 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Sanitized agent response: %s", agent_response.content)
         result = json.loads(agent_response.content)
         LOGGER.info("Result: %s", result)
+        result_dto = ResultDto(
+            **{
+                **result,
+                "source": task.source.value,
+                "args": task.args,
+                "commit_hash": task.commit_hash,
+            }
+        )
+        notifications_results = self.notification_service.send_notifications(result_dto)
         # Remove issues from result if exists
         if "issues" in result:
             result.pop("issues")
         status = result.get("status")
         LOGGER.info("Status: %s", status)
+        result = {**result, **notifications_results}
         try:
 
             if status == AnalysisStatus.COMPLETED.value:
