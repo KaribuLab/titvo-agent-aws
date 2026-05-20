@@ -43,7 +43,7 @@ class NotificationService:
 
     def send_notifications(self, result_dto: ResultDto) -> Dict[str, Any]:
         if result_dto.status == AnalysisStatus.COMPLETED.value:
-            return None
+            return {}
         notifications_results = {}
         issues = self.__normalize_issues(result_dto.commit_hash, result_dto.issues)
         report_result = self.report_repository.create_report(
