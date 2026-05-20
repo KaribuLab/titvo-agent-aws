@@ -19,7 +19,7 @@ class AwsConfigurationAdapter(IConfigurationProvider):
         response = self.dynamodb_client.get_item(
             TableName=self.table_name, Key={"parameter_id": {"S": parameter_id}}
         )
-        if response["Item"] is None:
+        if "Item" not in response or response["Item"] is None:
             return None
         return response["Item"]["value"]["S"]
 
