@@ -20,9 +20,11 @@ class AwsConfigurationAdapter(IConfigurationProvider):
             TableName=self.table_name, Key={"parameter_id": {"S": parameter_id}}
         )
         if response["Item"] is None:
-            raise ValueError(f"Parameter {parameter_id} not found")
+            return None
         return response["Item"]["value"]["S"]
 
     def get_secret(self, parameter_id: str) -> str:
         encrypted_value = self.get_value(parameter_id)
+        if encrypted_value is None:
+            return None
         return self.encryption_service.decrypt(encrypted_value)
