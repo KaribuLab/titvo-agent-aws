@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict
 
 from typing_extensions import List
@@ -8,6 +9,8 @@ from code_analysis.domain.entities.task_entity import TaskSource
 from code_analysis.domain.ports.bitbucket_repository import IBitbucketRepository
 from code_analysis.domain.ports.github_repository import IGitHubRepository
 from code_analysis.domain.ports.report_repository import IReportRepository
+
+LOGGER = logging.getLogger(__name__)
 
 
 class NotificationService:
@@ -56,6 +59,7 @@ class NotificationService:
                 scaned_files=result_dto.scaned_files,
             )
         )
+        LOGGER.info("Report result: %s", report_result)
         notifications_results["report_url"] = report_result["reportURL"]
         if result_dto.source == TaskSource.BITBUCKET.value:
             bitbucket_code_insights_input_dto = BitbucketCodeInsightsInputDto(
@@ -69,6 +73,7 @@ class NotificationService:
             bitbucket_result = self.bitbucket_repository.create_code_insights_report(
                 bitbucket_code_insights_input_dto
             )
+            LOGGER.info("Bitbucket result: %s", bitbucket_result)
             notifications_results["code_insights_url"] = bitbucket_result[
                 "codeInsightsURL"
             ]
@@ -83,5 +88,7 @@ class NotificationService:
                     scaned_files=result_dto.scaned_files,
                 )
             )
+            LOGGER.info("GitHub result: %s", github_result)
             notifications_results["html_url"] = github_result["htmlURL"]
+        LOGGER.info("Notifications results: %s", notifications_results)
         return notifications_results
