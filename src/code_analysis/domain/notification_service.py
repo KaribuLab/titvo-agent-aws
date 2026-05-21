@@ -73,7 +73,6 @@ class NotificationService:
             bitbucket_result = self.bitbucket_repository.create_code_insights_report(
                 bitbucket_code_insights_input_dto
             )
-            LOGGER.info("Bitbucket result: %s", bitbucket_result)
             notifications_results["code_insights_url"] = bitbucket_result[
                 "codeInsightsURL"
             ]
@@ -88,7 +87,6 @@ class NotificationService:
                     scaned_files=result_dto.scaned_files,
                 )
             )
-            LOGGER.info("GitHub result: %s", github_result)
             notifications_results["html_url"] = github_result["htmlURL"]
         LOGGER.info("Notifications results: %s", notifications_results)
         return notifications_results
