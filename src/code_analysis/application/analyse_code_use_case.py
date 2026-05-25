@@ -63,6 +63,8 @@ class AnalyseCodeUseCase:
                 repository_url=task.repository_url,
                 commit_hash=task.commit_hash,
                 args=content_args,
+                # Files retrieved internally by LangGraph MCP node
+                files_content="",
             ),
         )
         LOGGER.debug("Sending message to agent: %s", message.content)

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-from ast import Dict
 from logging.config import dictConfig
 from typing import Any, Optional
 
@@ -10,6 +9,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
+from code_analysis import prompts as prompt_registry
 from code_analysis.application.analyse_code_use_case import AnalyseCodeUseCase
 from code_analysis.domain.notification_service import NotificationService
 from code_analysis.infra.adapters.dynamo_task_repository import DynamoTaskRepository
@@ -27,6 +27,7 @@ from code_analysis.infra.adapters.langchain_agent_adapter import (
     LangchainAgent,
     LangchainAgentModelFactory,
 )
+from code_analysis.infra.adapters.langgraph_agent import LangGraphAgent
 from logging_config import config
 from shared.infra.adapters.aws_configuration_adapter import AwsConfigurationAdapter
 from shared.infra.adapters.aws_secrets_adapter import AwsSecretsAdapter
@@ -44,9 +45,108 @@ def create_boto3_client(service_name: str) -> Any:
     return boto3.client(service_name)
 
 
+def get_agent_mode() -> str:
+    """Get agent mode from environment, default to langgraph."""
+    mode = os.getenv("TITVO_AGENT_MODE", "langgraph").lower()
+    valid_modes = ["langgraph", "legacy"]
+    if mode not in valid_modes:
+        LOGGER.warning(
+            "Invalid agent mode '%s', using default 'langgraph'. Valid: %s",
+            mode,
+            valid_modes,
+        )
+        return "langgraph"
+    return mode
+
+
+async def create_legacy_agent(
+    ai_provider: str,
+    ai_model: str,
+    ai_api_key: str,
+    mcp_server_url: str,
+    langfuse_handler: Optional[CallbackHandler],
+    langfuse_metadata: Optional[dict[str, Any]],
+):
+    """Create legacy LangchainAgent."""
+    LOGGER.info("Using LEGACY agent mode (LangchainAgent)")
+
+    # Load prompts from registry (embedded in code)
+    system_prompt = prompt_registry.get_system_prompt()
+    content_template = prompt_registry.get_content_template()
+
+    model_factory = LangchainAgentModelFactory(
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        ai_api_key=ai_api_key,
+    )
+    tools_factory = AsyncMCPToolsFactory(
+        mcp_client=MultiServerMCPClient(
+            {
+                "titvo-mcp-server": {
+                    "transport": "streamable_http",
+                    "url": mcp_server_url,
+                },
+            }
+        ),
+    )
+    agent = LangchainAgent(
+        system_prompt=system_prompt,
+        model_factory=model_factory,
+        tools_factory=tools_factory,
+        langfuse_callback_handler=langfuse_handler,
+        langfuse_metadata=langfuse_metadata,
+    )
+    return agent, content_template
+
+
+async def create_langgraph_agent(
+    ai_provider: str,
+    ai_model: str,
+    ai_api_key: str,
+    mcp_server_url: str,
+    langfuse_handler: Optional[CallbackHandler],
+    langfuse_metadata: Optional[dict[str, Any]],
+):
+    """Create LangGraph agent with expert nodes."""
+    LOGGER.info("Using LANGGRAPH agent mode (LangGraphAgent with expert nodes)")
+
+    # Load prompts from registry (embedded in code)
+    system_prompt = prompt_registry.get_system_prompt()
+    content_template = prompt_registry.get_content_template()
+
+    model_factory = LangchainAgentModelFactory(
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        ai_api_key=ai_api_key,
+    )
+    tools_factory = AsyncMCPToolsFactory(
+        mcp_client=MultiServerMCPClient(
+            {
+                "titvo-mcp-server": {
+                    "transport": "streamable_http",
+                    "url": mcp_server_url,
+                },
+            }
+        ),
+    )
+    agent = LangGraphAgent(
+        system_prompt=system_prompt,
+        model_factory=model_factory,
+        tools_factory=tools_factory,
+        langfuse_callback_handler=langfuse_handler,
+        langfuse_metadata=langfuse_metadata,
+    )
+    return agent, content_template
+
+
 async def main():
     task_id = os.getenv("TITVO_SCAN_TASK_ID")
-    LOGGER.debug("Starting the application with task id %s", task_id)
+    agent_mode = get_agent_mode()
+    LOGGER.debug(
+        "Starting the application with task id %s, mode=%s",
+        task_id,
+        agent_mode,
+    )
     if task_id is None:
         raise ValueError("TITVO_SCAN_TASK_ID is not set")
     task_table_name = os.getenv("TITVO_DYNAMO_TASK_TABLE_NAME")
@@ -92,14 +192,8 @@ async def main():
     LOGGER.debug("MCP server url %s", mcp_server_url)
     if mcp_server_url is None:
         raise ValueError("mcp_server_url is not set")
-    system_prompt = configuration_provider.get_value("scan_system_prompt")
-    LOGGER.debug("System prompt %s", system_prompt)
-    if system_prompt is None:
-        raise ValueError("system_prompt is not set")
-    content_template = configuration_provider.get_value("content_template")
-    LOGGER.debug("Content template %s", content_template)
-    if content_template is None:
-        raise ValueError("content_template is not set")
+    # Note: scan_system_prompt and content_template now loaded from embedded code
+    # No longer read from DynamoDB
     ai_provider = configuration_provider.get_value("ai_provider")
     LOGGER.debug("AI provider %s", ai_provider)
     if ai_provider is None:
@@ -116,26 +210,12 @@ async def main():
         table_name=task_table_name,
     )
 
-    model_factory = LangchainAgentModelFactory(
-        ai_provider=ai_provider,
-        ai_model=ai_model,
-        ai_api_key=ai_api_key,
-    )
-    tools_factory = AsyncMCPToolsFactory(
-        mcp_client=MultiServerMCPClient(
-            {
-                "titvo-mcp-server": {
-                    "transport": "streamable_http",
-                    "url": mcp_server_url,
-                },
-            }
-        ),
-    )
+    # Setup Langfuse
     langfuse_public_key = configuration_provider.get_secret("langfuse_public_key")
     langfuse_secret_key = configuration_provider.get_secret("langfuse_secret_key")
     langfuse_host = configuration_provider.get_value("langfuse_host")
     langfuse_callback_handler: Optional[CallbackHandler] = None
-    langfuse_metadata: Optional[Dict[str, Any]] = None
+    langfuse_metadata: Optional[dict[str, Any]] = None
     if (
         langfuse_public_key is not None
         and langfuse_secret_key is not None
@@ -149,14 +229,29 @@ async def main():
         langfuse_callback_handler = CallbackHandler()
         langfuse_metadata = {
             "langfuse_session_id": task_id,
+            "agent_mode": agent_mode,
         }
-    agent = LangchainAgent(
-        system_prompt=system_prompt,
-        model_factory=model_factory,
-        tools_factory=tools_factory,
-        langfuse_callback_handler=langfuse_callback_handler,
-        langfuse_metadata=langfuse_metadata,
-    )
+
+    # Create agent based on mode
+    if agent_mode == "legacy":
+        agent, content_template = await create_legacy_agent(
+            ai_provider=ai_provider,
+            ai_model=ai_model,
+            ai_api_key=ai_api_key,
+            mcp_server_url=mcp_server_url,
+            langfuse_handler=langfuse_callback_handler,
+            langfuse_metadata=langfuse_metadata,
+        )
+    else:
+        agent, content_template = await create_langgraph_agent(
+            ai_provider=ai_provider,
+            ai_model=ai_model,
+            ai_api_key=ai_api_key,
+            mcp_server_url=mcp_server_url,
+            langfuse_handler=langfuse_callback_handler,
+            langfuse_metadata=langfuse_metadata,
+        )
+
     notification_service = NotificationService(
         bitbucket_repository=LambdaBitbucketRepository(
             function_name=bitbucket_repository_function_name,
