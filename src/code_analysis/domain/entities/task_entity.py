@@ -1,7 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class TaskSource(Enum):
@@ -29,6 +29,7 @@ class Task:
     updated_at: datetime
     status: TaskStatus
     source: TaskSource
+    branch: Optional[str] = field(default=None)
 
     @property
     def repository_url(self) -> str:

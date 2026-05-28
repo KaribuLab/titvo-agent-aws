@@ -2,7 +2,10 @@ Analyze the following code files for security vulnerabilities.
 
 <<<UNTRUSTED_INPUT>>>
 Repository: {repository_url}
+Branch: {branch}
 Commit: {commit_hash}
+
+{rag_context}
 
 Additional parameters:
 {args}

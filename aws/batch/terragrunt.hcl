@@ -38,6 +38,7 @@ dependency parameters {
       "/tvo/security-scan/test/infra/dynamo/task-table-name"      = "tvo-github-security-scan-task-table-test"
       "/tvo/security-scan/test/infra/s3/cli-files/bucket_name"    = "devsecops-titvo-com-report-bucket"
       "/tvo/security-scan/test/infra/s3/reports/bucket_arn"       = "arn:aws:s3:::devsecops-titvo-com-report-bucket"
+      "/tvo/security-scan/test/infra/secret/manager/arn"          = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/test"
       "/tvo/security-scan/prod/infra/vpc/vpc_id"                  = "vpc-000000000000000"
       "/tvo/security-scan/prod/infra/vpc/subnets/private"         = "[\"subnet-0c4b3b6b1b7b3b3b3\"]"
       "/tvo/security-scan/prod/infra/dynamo/task-table-arn"       = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-github-security-scan-task-table-prod"
@@ -60,6 +61,18 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/lambda/github-issue-arn"             = "arn:aws:lambda:us-east-1:000000000000:function:tvo-mcp-github-issue-lambda-prod"
       "/tvo/security-scan/prod/infra/lambda/issue-report-name"          = "tvo-mcp-issue-report-lambda-prod"
       "/tvo/security-scan/prod/infra/lambda/issue-report-arn"           = "arn:aws:lambda:us-east-1:000000000000:function:tvo-mcp-issue-report-lambda-prod"
+      "/tvo/security-scan/test/infra/batch/rag-indexer/job_definition_name" = "tvo-rag-indexer-batch-test"
+      "/tvo/security-scan/test/infra/batch/rag-indexer/job_definition_arn"  = "arn:aws:batch:us-east-1:000000000000:job-definition/tvo-rag-indexer-batch-test:1"
+      "/tvo/security-scan/test/infra/batch/rag-indexer/job_queue_name"      = "tvo-rag-indexer-batch-test"
+      "/tvo/security-scan/test/infra/batch/rag-indexer/job_queue_arn"       = "arn:aws:batch:us-east-1:000000000000:job-queue/tvo-rag-indexer-batch-test"
+      "/tvo/security-scan/prod/infra/batch/rag-indexer/job_definition_name" = "tvo-rag-indexer-batch-prod"
+      "/tvo/security-scan/prod/infra/batch/rag-indexer/job_definition_arn"  = "arn:aws:batch:us-east-1:000000000000:job-definition/tvo-rag-indexer-batch-prod:1"
+      "/tvo/security-scan/prod/infra/batch/rag-indexer/job_queue_name"      = "tvo-rag-indexer-batch-prod"
+      "/tvo/security-scan/prod/infra/batch/rag-indexer/job_queue_arn"       = "arn:aws:batch:us-east-1:000000000000:job-queue/tvo-rag-indexer-batch-prod"
+      "/tvo/security-scan/test/infra/s3/rag-code/bucket_name"               = "tvo-rag-index-test-us-east-1"
+      "/tvo/security-scan/test/infra/s3/rag-code/bucket_arn"                = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
+      "/tvo/security-scan/prod/infra/s3/rag-code/bucket_name"               = "tvo-rag-index-prod-us-east-1"
+      "/tvo/security-scan/prod/infra/s3/rag-code/bucket_arn"                = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
     }
   }
 }
@@ -102,6 +115,18 @@ inputs = {
     {
       name  = "TITVO_LOG_LEVEL"
       value = "INFO"
+    },
+    {
+      name  = "TITVO_RAG_INDEXER_JOB_DEFINITION"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/batch/rag-indexer/job_definition_name"]
+    },
+    {
+      name  = "TITVO_RAG_INDEXER_JOB_QUEUE"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/batch/rag-indexer/job_queue_name"]
+    },
+    {
+      name  = "TITVO_RAG_INDEXER_BUCKET"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_name"]
     }
   ]
   job_policy = jsonencode({
@@ -155,7 +180,7 @@ inputs = {
           "secretsmanager:GetSecretValue"
         ],
         "Resource" : [
-          "arn:aws:secretsmanager:*:*:secret:/tvo/security-scan/prod*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/secret/manager/arn"]
         ]
       },
       {
@@ -179,6 +204,34 @@ inputs = {
           dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/bitbucket-code-insights-arn"],
           dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/github-issue-arn"],
           dependency.parameters.outputs.parameters["${local.base_path}/infra/lambda/issue-report-arn"]
+        ]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "batch:SubmitJob"
+        ],
+        "Resource" : [
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/batch/rag-indexer/job_queue_arn"],
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/batch/rag-indexer/job_definition_arn"]
+        ]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "batch:DescribeJobs"
+        ],
+        "Resource" : ["*"]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ],
+        "Resource" : [
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"]}/*"
         ]
       }
     ]

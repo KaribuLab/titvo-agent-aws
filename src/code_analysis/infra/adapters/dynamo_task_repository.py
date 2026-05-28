@@ -38,6 +38,7 @@ class DynamoTaskRepository(ITaskRepository):
             updated_at=updated_at,
             status=TaskStatus(item.get("status", TaskStatus.PENDING.value)),
             source=TaskSource(item.get("source", TaskSource.GITHUB.value)),
+            branch=item.get("branch"),
         )
 
     def update_task(self, task: Task) -> Task:

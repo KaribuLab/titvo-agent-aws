@@ -24,11 +24,14 @@ from code_analysis.infra.adapters.lambda_report_repository import (
 )
 from code_analysis.infra.adapters.langchain_agent_adapter import (
     AsyncMCPToolsFactory,
-    LangchainAgent,
     LangchainAgentModelFactory,
 )
 from code_analysis.infra.adapters.langgraph_agent import LangGraphAgent
+from code_analysis.infra.adapters.s3_rag_index_status_adapter import (
+    create_s3_rag_index_status_adapter,
+)
 from logging_config import config
+from rag_indexer_trigger.rag_indexer_batch_trigger import create_rag_indexer_batch_trigger
 from shared.infra.adapters.aws_configuration_adapter import AwsConfigurationAdapter
 from shared.infra.adapters.aws_secrets_adapter import AwsSecretsAdapter
 from shared.infra.services.encryption_service import EncryptionService
@@ -43,60 +46,6 @@ def create_boto3_client(service_name: str) -> Any:
     if aws_endpoint is not None:
         return boto3.client(service_name, endpoint_url=aws_endpoint)
     return boto3.client(service_name)
-
-
-def get_agent_mode() -> str:
-    """Get agent mode from environment, default to langgraph."""
-    mode = os.getenv("TITVO_AGENT_MODE", "langgraph").lower()
-    valid_modes = ["langgraph", "legacy"]
-    if mode not in valid_modes:
-        LOGGER.warning(
-            "Invalid agent mode '%s', using default 'langgraph'. Valid: %s",
-            mode,
-            valid_modes,
-        )
-        return "langgraph"
-    return mode
-
-
-async def create_legacy_agent(
-    ai_provider: str,
-    ai_model: str,
-    ai_api_key: str,
-    mcp_server_url: str,
-    langfuse_handler: Optional[CallbackHandler],
-    langfuse_metadata: Optional[dict[str, Any]],
-):
-    """Create legacy LangchainAgent."""
-    LOGGER.info("Using LEGACY agent mode (LangchainAgent)")
-
-    # Load prompts from registry (embedded in code)
-    system_prompt = prompt_registry.get_system_prompt()
-    content_template = prompt_registry.get_content_template()
-
-    model_factory = LangchainAgentModelFactory(
-        ai_provider=ai_provider,
-        ai_model=ai_model,
-        ai_api_key=ai_api_key,
-    )
-    tools_factory = AsyncMCPToolsFactory(
-        mcp_client=MultiServerMCPClient(
-            {
-                "titvo-mcp-server": {
-                    "transport": "streamable_http",
-                    "url": mcp_server_url,
-                },
-            }
-        ),
-    )
-    agent = LangchainAgent(
-        system_prompt=system_prompt,
-        model_factory=model_factory,
-        tools_factory=tools_factory,
-        langfuse_callback_handler=langfuse_handler,
-        langfuse_metadata=langfuse_metadata,
-    )
-    return agent, content_template
 
 
 async def create_langgraph_agent(
@@ -141,12 +90,7 @@ async def create_langgraph_agent(
 
 async def main():
     task_id = os.getenv("TITVO_SCAN_TASK_ID")
-    agent_mode = get_agent_mode()
-    LOGGER.debug(
-        "Starting the application with task id %s, mode=%s",
-        task_id,
-        agent_mode,
-    )
+    LOGGER.debug("Starting the application with task id %s", task_id)
     if task_id is None:
         raise ValueError("TITVO_SCAN_TASK_ID is not set")
     task_table_name = os.getenv("TITVO_DYNAMO_TASK_TABLE_NAME")
@@ -229,28 +173,16 @@ async def main():
         langfuse_callback_handler = CallbackHandler()
         langfuse_metadata = {
             "langfuse_session_id": task_id,
-            "agent_mode": agent_mode,
         }
 
-    # Create agent based on mode
-    if agent_mode == "legacy":
-        agent, content_template = await create_legacy_agent(
-            ai_provider=ai_provider,
-            ai_model=ai_model,
-            ai_api_key=ai_api_key,
-            mcp_server_url=mcp_server_url,
-            langfuse_handler=langfuse_callback_handler,
-            langfuse_metadata=langfuse_metadata,
-        )
-    else:
-        agent, content_template = await create_langgraph_agent(
-            ai_provider=ai_provider,
-            ai_model=ai_model,
-            ai_api_key=ai_api_key,
-            mcp_server_url=mcp_server_url,
-            langfuse_handler=langfuse_callback_handler,
-            langfuse_metadata=langfuse_metadata,
-        )
+    agent, content_template = await create_langgraph_agent(
+        ai_provider=ai_provider,
+        ai_model=ai_model,
+        ai_api_key=ai_api_key,
+        mcp_server_url=mcp_server_url,
+        langfuse_handler=langfuse_callback_handler,
+        langfuse_metadata=langfuse_metadata,
+    )
 
     notification_service = NotificationService(
         bitbucket_repository=LambdaBitbucketRepository(
@@ -263,11 +195,17 @@ async def main():
             function_name=report_repository_function_name,
         ),
     )
+
+    rag_index_status = create_s3_rag_index_status_adapter()
+    rag_indexer_trigger = create_rag_indexer_batch_trigger()
+
     analyse_code_use_case = AnalyseCodeUseCase(
         task_repository=task_repository,
         agent=agent,
         content_template=content_template,
         notification_service=notification_service,
+        rag_index_status=rag_index_status,
+        rag_indexer_trigger=rag_indexer_trigger,
     )
     await analyse_code_use_case.execute(task_id)
 
