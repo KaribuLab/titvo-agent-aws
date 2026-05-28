@@ -69,10 +69,10 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/batch/rag-indexer/job_definition_arn"  = "arn:aws:batch:us-east-1:000000000000:job-definition/tvo-rag-indexer-batch-prod:1"
       "/tvo/security-scan/prod/infra/batch/rag-indexer/job_queue_name"      = "tvo-rag-indexer-batch-prod"
       "/tvo/security-scan/prod/infra/batch/rag-indexer/job_queue_arn"       = "arn:aws:batch:us-east-1:000000000000:job-queue/tvo-rag-indexer-batch-prod"
-      "/tvo/security-scan/test/infra/s3/rag-code/bucket_name"               = "tvo-rag-index-test-us-east-1"
-      "/tvo/security-scan/test/infra/s3/rag-code/bucket_arn"                = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
-      "/tvo/security-scan/prod/infra/s3/rag-code/bucket_name"               = "tvo-rag-index-prod-us-east-1"
-      "/tvo/security-scan/prod/infra/s3/rag-code/bucket_arn"                = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
+      "/tvo/security-scan/test/infra/s3/rag-index/bucket_name"               = "tvo-rag-index-test-us-east-1"
+      "/tvo/security-scan/test/infra/s3/rag-index/bucket_arn"               = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
+      "/tvo/security-scan/prod/infra/s3/rag-index/bucket_name"              = "tvo-rag-index-prod-us-east-1"
+      "/tvo/security-scan/prod/infra/s3/rag-index/bucket_arn"               = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
     }
   }
 }
@@ -126,7 +126,7 @@ inputs = {
     },
     {
       name  = "TITVO_RAG_INDEXER_BUCKET"
-      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_name"]
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_name"]
     }
   ]
   job_policy = jsonencode({
@@ -230,8 +230,8 @@ inputs = {
           "s3:ListBucket"
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"],
-          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"]}/*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"]}/*"
         ]
       }
     ]
