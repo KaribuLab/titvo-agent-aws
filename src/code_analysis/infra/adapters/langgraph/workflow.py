@@ -16,6 +16,9 @@ from code_analysis.infra.adapters.langgraph.nodes.mcp_retrieval_node import (
 from code_analysis.infra.adapters.langgraph.nodes.merge_findings_node import (
     MergeFindingsNode,
 )
+from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
+    RagRetrievalNode,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
@@ -34,9 +37,11 @@ class LangGraphWorkflowBuilder:
         self,
         mcp_client: MultiServerMCPClient,
         model: BaseChatModel,
+        rag_node: RagRetrievalNode | None = None,
     ):
         self._mcp_client = mcp_client
         self._model = model
+        self._rag_node = rag_node
 
     def build(self) -> StateGraph:
         """Build and return the configured StateGraph."""
@@ -44,6 +49,7 @@ class LangGraphWorkflowBuilder:
 
         # Create nodes
         mcp_node = MCPRetrievalNode(self._mcp_client)
+        rag_node = self._rag_node
         expert_nodes = create_expert_nodes(self._model)
         merge_node = MergeFindingsNode()
 
@@ -52,6 +58,10 @@ class LangGraphWorkflowBuilder:
 
         # Add MCP retrieval node
         workflow.add_node("mcp_retrieve", mcp_node)
+
+        # Add RAG retrieval node (always present; returns [] gracefully if unavailable)
+        if rag_node is not None:
+            workflow.add_node("rag_retrieve", rag_node)
 
         # Add expert nodes
         for expert in expert_nodes:
@@ -63,23 +73,39 @@ class LangGraphWorkflowBuilder:
         # Set entry point
         workflow.set_entry_point("mcp_retrieve")
 
-        # Define routing from MCP
-        def route_from_mcp(state: AgentState) -> str:
-            """Route based on MCP result."""
-            if state.get("mcp_error"):
-                return "merge"  # Skip experts on error
-            if not state.get("files"):
-                return "merge"  # Skip experts if no files
-            return "expert_prompt_hardening"
+        first_expert = "expert_prompt_hardening"
 
-        workflow.add_conditional_edges(
-            "mcp_retrieve",
-            route_from_mcp,
-            {
-                "expert_prompt_hardening": "expert_prompt_hardening",
-                "merge": "merge",
-            },
-        )
+        if rag_node is not None:
+            # Route mcp_retrieve → rag_retrieve (on success) or merge (on error)
+            def route_from_mcp(state: AgentState) -> str:
+                if state.get("mcp_error"):
+                    return "merge"
+                if not state.get("files"):
+                    return "merge"
+                return "rag_retrieve"
+
+            workflow.add_conditional_edges(
+                "mcp_retrieve",
+                route_from_mcp,
+                {"rag_retrieve": "rag_retrieve", "merge": "merge"},
+            )
+
+            # Route rag_retrieve → first expert (always; RAG errors are swallowed)
+            workflow.add_edge("rag_retrieve", first_expert)
+        else:
+            # No RAG node — route mcp_retrieve directly to first expert
+            def route_from_mcp_no_rag(state: AgentState) -> str:
+                if state.get("mcp_error"):
+                    return "merge"
+                if not state.get("files"):
+                    return "merge"
+                return first_expert
+
+            workflow.add_conditional_edges(
+                "mcp_retrieve",
+                route_from_mcp_no_rag,
+                {first_expert: first_expert, "merge": "merge"},
+            )
 
         # Chain experts sequentially
         expert_names = [f"expert_{e.expert_name}" for e in expert_nodes]
@@ -123,7 +149,8 @@ class WorkflowBuildError(Exception):
 def create_workflow(
     mcp_client: MultiServerMCPClient,
     model: BaseChatModel,
+    rag_node: RagRetrievalNode | None = None,
 ) -> Any:
     """Factory function to create compiled workflow."""
-    builder = LangGraphWorkflowBuilder(mcp_client, model)
+    builder = LangGraphWorkflowBuilder(mcp_client, model, rag_node=rag_node)
     return builder.build()

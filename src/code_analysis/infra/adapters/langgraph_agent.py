@@ -17,6 +17,9 @@ from code_analysis.domain.ports.ia_agent import (
     AgentResponse,
     AsyncAgentToolsFactory,
 )
+from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
+    RagRetrievalNode,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.infra.adapters.langgraph.workflow import create_workflow
 
@@ -39,10 +42,12 @@ class LangGraphAgent(AbstractAgent):
         tools_factory: AsyncAgentToolsFactory,
         langfuse_callback_handler: CallbackHandler | None = None,
         langfuse_metadata: dict[str, Any] | None = None,
+        rag_node: RagRetrievalNode | None = None,
     ):
         super().__init__(system_prompt, model_factory, tools_factory)
         self._langfuse_handler = langfuse_callback_handler
         self._langfuse_metadata = langfuse_metadata or {}
+        self._rag_node = rag_node
         self._workflow = None
         self._mcp_client = None
 
@@ -63,20 +68,25 @@ class LangGraphAgent(AbstractAgent):
 
         # Extract MCP client from tools factory
         # The AsyncMCPToolsFactory has the client
-        if hasattr(self._tools_factory, '_mcp_client'):
+        if hasattr(self._tools_factory, "_mcp_client"):
             self._mcp_client = self._tools_factory._mcp_client
         else:
             # Create new client if not available
             from langchain_mcp_adapters.client import MultiServerMCPClient
-            self._mcp_client = MultiServerMCPClient({
-                "titvo-mcp-server": {
-                    "transport": "streamable_http",
-                    "url": "http://localhost:3000/mcp",  # Default, override in invoke
+
+            self._mcp_client = MultiServerMCPClient(
+                {
+                    "titvo-mcp-server": {
+                        "transport": "streamable_http",
+                        "url": "http://localhost:3000/mcp",  # Default, override in invoke
+                    }
                 }
-            })
+            )
 
         # Build workflow
-        self._workflow = create_workflow(self._mcp_client, model)
+        self._workflow = create_workflow(
+            self._mcp_client, model, rag_node=self._rag_node
+        )
         LOGGER.info("LangGraph workflow initialized")
 
     async def _invoke_wrapped(
@@ -110,6 +120,7 @@ class LangGraphAgent(AbstractAgent):
             initial_state: AgentState = {
                 "task_id": params.get("task_id", "unknown"),
                 "repository_url": params.get("repository_url", ""),
+                "branch": params.get("branch", ""),
                 "commit_hash": params.get("commit_hash", ""),
                 "extra_args": params.get("extra_args", {}),
                 "files": [],
@@ -147,9 +158,7 @@ class LangGraphAgent(AbstractAgent):
                 final_output = {
                     "status": result.get("status", "FAILED"),
                     "scaned_files": result.get("scaned_files", 0),
-                    "issues": [
-                        issue.to_dict() for issue in result.get("issues", [])
-                    ],
+                    "issues": [issue.to_dict() for issue in result.get("issues", [])],
                 }
 
             LOGGER.info(
@@ -190,6 +199,7 @@ class LangGraphAgent(AbstractAgent):
         """
         params: dict[str, Any] = {
             "repository_url": "",
+            "branch": "",
             "commit_hash": "",
             "extra_args": {},
         }
@@ -199,6 +209,8 @@ class LangGraphAgent(AbstractAgent):
             line = line.strip()
             if line.startswith("Repository:"):
                 params["repository_url"] = line.replace("Repository:", "").strip()
+            elif line.startswith("Branch:"):
+                params["branch"] = line.replace("Branch:", "").strip()
             elif line.startswith("Commit:"):
                 params["commit_hash"] = line.replace("Commit:", "").strip()
 

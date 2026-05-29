@@ -27,8 +27,14 @@ from code_analysis.infra.adapters.langchain_agent_adapter import (
     LangchainAgentModelFactory,
 )
 from code_analysis.infra.adapters.langgraph_agent import LangGraphAgent
+from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
+    RagRetrievalNode,
+)
 from code_analysis.infra.adapters.s3_rag_index_status_adapter import (
     create_s3_rag_index_status_adapter,
+)
+from code_analysis.infra.adapters.s3_sqlite_rag_context_adapter import (
+    S3SqliteRagContextAdapter,
 )
 from logging_config import config
 from rag_indexer_trigger.rag_indexer_batch_trigger import create_rag_indexer_batch_trigger
@@ -55,6 +61,7 @@ async def create_langgraph_agent(
     mcp_server_url: str,
     langfuse_handler: Optional[CallbackHandler],
     langfuse_metadata: Optional[dict[str, Any]],
+    rag_node: Optional[RagRetrievalNode] = None,
 ):
     """Create LangGraph agent with expert nodes."""
     LOGGER.info("Using LANGGRAPH agent mode (LangGraphAgent with expert nodes)")
@@ -84,6 +91,7 @@ async def create_langgraph_agent(
         tools_factory=tools_factory,
         langfuse_callback_handler=langfuse_handler,
         langfuse_metadata=langfuse_metadata,
+        rag_node=rag_node,
     )
     return agent, content_template
 
@@ -175,6 +183,28 @@ async def main():
             "langfuse_session_id": task_id,
         }
 
+    # RAG context enrichment setup
+    rag_indexer_bucket = os.getenv("TITVO_RAG_INDEXER_BUCKET")
+    embedding_provider = configuration_provider.get_value("embedding_provider")
+    embedding_model = configuration_provider.get_value("embedding_model")
+    embedding_api_key = configuration_provider.get_secret("embedding_api_key")
+    rag_node: Optional[RagRetrievalNode] = None
+    if rag_indexer_bucket and embedding_provider and embedding_model and embedding_api_key:
+        rag_context_adapter = S3SqliteRagContextAdapter(
+            s3_client=create_boto3_client("s3"),
+            bucket_name=rag_indexer_bucket,
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            embedding_api_key=embedding_api_key,
+        )
+        rag_node = RagRetrievalNode(rag_context_adapter)
+        LOGGER.info("RAG context enrichment enabled (bucket=%s)", rag_indexer_bucket)
+    else:
+        LOGGER.warning(
+            "RAG context enrichment disabled: missing bucket (%s) or embedding config",
+            rag_indexer_bucket,
+        )
+
     agent, content_template = await create_langgraph_agent(
         ai_provider=ai_provider,
         ai_model=ai_model,
@@ -182,6 +212,7 @@ async def main():
         mcp_server_url=mcp_server_url,
         langfuse_handler=langfuse_callback_handler,
         langfuse_metadata=langfuse_metadata,
+        rag_node=rag_node,
     )
 
     notification_service = NotificationService(

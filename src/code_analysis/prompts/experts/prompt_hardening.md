@@ -162,6 +162,17 @@ Return findings as:
 
 ## Response Format
 
+## RAG Context (contexto del codebase completo)
+
+El human message puede incluir un bloque `=== RAG CONTEXT ===` con fragmentos semánticamente relacionados del codebase completo de la rama (no solo los archivos del commit). Estos fragmentos provienen de una búsqueda vectorial sobre el índice RAG y representan código existente que es relevante para los archivos que se están analizando.
+
+**Cómo usar el RAG Context:**
+- Úsalo para entender cómo el código modificado interactúa con el resto del proyecto.
+- Si un archivo del commit introduce o modifica un patrón de prompt injection, busca en el RAG Context si ese mismo patrón aparece en otros archivos del codebase y escala la severidad si el impacto es más amplio.
+- Si el RAG Context muestra que una función o configuración vulnerable del commit es utilizada en múltiples puntos del codebase, reporta el hallazgo con severidad más alta.
+- **No reportes issues basados exclusivamente en fragmentos del RAG Context**; el RAG Context es soporte para enriquecer el análisis de los archivos del commit, no una fuente de nuevos hallazgos independientes.
+- Si el bloque RAG Context está vacío o ausente, continúa el análisis normalmente con solo los archivos del commit.
+
 Return ONLY valid JSON:
 
 ```json

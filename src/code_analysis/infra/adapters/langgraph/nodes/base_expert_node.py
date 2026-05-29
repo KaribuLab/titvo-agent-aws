@@ -106,15 +106,23 @@ class BaseExpertNode(ABC):
                 LOGGER.debug("No files to analyze for %s", self.expert_name)
                 return {"issues": []}
 
-            # Format files for LLM
+            # Format commit files for LLM
             files_content = self._format_files(filtered_files)
+
+            # Filter RAG chunks by this expert's file patterns and append
+            all_rag_chunks = state.get("rag_chunks", [])
+            filtered_rag = [
+                c for c in all_rag_chunks
+                if self.should_analyze_file(c.get("file_path", ""))
+            ]
+            rag_content = self._format_rag_chunks(filtered_rag)
 
             # Get expert prompt
             expert_prompt = prompt_registry.get_expert_prompt(self.expert_name)
 
             # Create messages
             system_msg = SystemMessage(content=expert_prompt)
-            human_msg = HumanMessage(content=files_content)
+            human_msg = HumanMessage(content=files_content + rag_content)
 
             # Invoke LLM
             LOGGER.debug("Invoking %s expert", self.expert_name)
@@ -157,13 +165,27 @@ class BaseExpertNode(ABC):
             }
 
     def _format_files(self, files: list[dict[str, str]]) -> str:
-        """Format files for LLM consumption."""
+        """Format commit files for LLM consumption."""
         parts = []
         for f in files:
             parts.append(f"=== FILE: {f['path']} ===")
             parts.append(f["content"])
             parts.append("=== END FILE ===")
             parts.append("")
+        return "\n".join(parts)
+
+    def _format_rag_chunks(self, chunks: list[dict]) -> str:
+        """Format RAG context chunks for LLM consumption.
+
+        Returns empty string when chunks list is empty so no block is added.
+        """
+        if not chunks:
+            return ""
+        parts = ["\n=== RAG CONTEXT (codebase background) ==="]
+        for chunk in chunks:
+            parts.append(f"--- {chunk.get('file_path', 'unknown')} ---")
+            parts.append(chunk.get("chunk_text", ""))
+        parts.append("=== END RAG CONTEXT ===\n")
         return "\n".join(parts)
 
     def _parse_response(

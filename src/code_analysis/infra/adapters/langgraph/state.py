@@ -18,6 +18,7 @@ class AgentState(TypedDict):
     # Task identification
     task_id: str
     repository_url: str
+    branch: str
     commit_hash: str
     extra_args: dict[str, Any]
 
@@ -25,6 +26,9 @@ class AgentState(TypedDict):
     files: list[dict[str, str]]  # List of {"path": str, "content": str}
     scaned_files: int
     mcp_error: NotRequired[str | None]
+
+    # RAG context chunks (retrieved by RagRetrievalNode, consumed by expert nodes)
+    rag_chunks: NotRequired[list[dict[str, Any]]]  # {"file_path", "chunk_text", "distance"}
 
     # Expert analysis results
     issues: list[ExpertIssue]

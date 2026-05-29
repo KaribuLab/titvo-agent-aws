@@ -2,6 +2,9 @@
 
 import pytest
 
+from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
+    BaseExpertNode,
+)
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
     CodeVulnerabilitiesNode,
     DevSecOpsNode,
@@ -174,3 +177,48 @@ class TestFileFiltering:
         
         # Fallback: all files returned
         assert len(filtered) == 2
+
+
+class TestBaseExpertNodeFormatRagChunks:
+    """Tests for BaseExpertNode._format_rag_chunks()."""
+
+    @pytest.fixture
+    def node(self):
+        return PromptHardeningNode(None)
+
+    def test_empty_chunks_returns_empty_string(self, node):
+        """Empty list should produce empty string (no RAG block added)."""
+        result = node._format_rag_chunks([])
+        assert result == ""
+
+    def test_single_chunk_produces_block(self, node):
+        """A single chunk should produce a properly formatted RAG block."""
+        chunks = [
+            {"file_path": "src/auth.py", "chunk_text": "def login(user): pass"},
+        ]
+        result = node._format_rag_chunks(chunks)
+
+        assert "=== RAG CONTEXT" in result
+        assert "src/auth.py" in result
+        assert "def login(user): pass" in result
+        assert "=== END RAG CONTEXT ===" in result
+
+    def test_multiple_chunks(self, node):
+        """Multiple chunks should all appear in the block."""
+        chunks = [
+            {"file_path": "src/a.py", "chunk_text": "code a"},
+            {"file_path": "src/b.py", "chunk_text": "code b"},
+        ]
+        result = node._format_rag_chunks(chunks)
+
+        assert "src/a.py" in result
+        assert "src/b.py" in result
+        assert "code a" in result
+        assert "code b" in result
+
+    def test_chunk_missing_file_path_uses_unknown(self, node):
+        """Chunk without file_path should use 'unknown' as label."""
+        chunks = [{"chunk_text": "orphan code"}]
+        result = node._format_rag_chunks(chunks)
+        assert "unknown" in result
+        assert "orphan code" in result

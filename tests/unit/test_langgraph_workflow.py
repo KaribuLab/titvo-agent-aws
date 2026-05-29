@@ -4,13 +4,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from code_analysis.domain.ports.rag_context_port import IRagContextPort
 from code_analysis.infra.adapters.langgraph.nodes.mcp_retrieval_node import (
     MCPRetrievalNode,
 )
 from code_analysis.infra.adapters.langgraph.nodes.merge_findings_node import (
     MergeFindingsNode,
 )
+from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
+    RagRetrievalNode,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
+from code_analysis.infra.adapters.langgraph.workflow import LangGraphWorkflowBuilder
 
 
 class TestMCPRetrievalNode:
@@ -196,10 +201,11 @@ class TestAgentState:
     """Tests for AgentState TypedDict."""
 
     def test_state_creation(self):
-        """AgentState should accept required fields."""
+        """AgentState should accept required fields including branch."""
         state: AgentState = {
             "task_id": "abc123",
             "repository_url": "https://github.com/test/repo",
+            "branch": "main",
             "commit_hash": "abc123def",
             "extra_args": {"key": "value"},
             "files": [],
@@ -208,3 +214,59 @@ class TestAgentState:
         }
         assert state["task_id"] == "abc123"
         assert state["repository_url"] == "https://github.com/test/repo"
+        assert state["branch"] == "main"
+
+    def test_rag_chunks_is_optional(self):
+        """rag_chunks should be optional (NotRequired) in AgentState."""
+        state: AgentState = {
+            "task_id": "abc123",
+            "repository_url": "https://github.com/test/repo",
+            "branch": "main",
+            "commit_hash": "abc123def",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 0,
+            "issues": [],
+        }
+        # rag_chunks is NotRequired, should default to missing
+        assert state.get("rag_chunks") is None
+
+
+class TestLangGraphWorkflowWithRag:
+    """Integration-style tests for workflow with RagRetrievalNode."""
+
+    @pytest.fixture
+    def mock_mcp_client(self):
+        client = MagicMock()
+        client.get_tools = AsyncMock(return_value=[])
+        return client
+
+    @pytest.fixture
+    def mock_model(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_rag_port(self):
+        class _MockPort(IRagContextPort):
+            def configure(self, repo, branch): pass
+            def search(self, query, k): return []
+            def close(self): pass
+        return _MockPort()
+
+    def test_workflow_includes_rag_retrieve_node(self, mock_mcp_client, mock_model, mock_rag_port):
+        """Workflow built with a RagRetrievalNode should include 'rag_retrieve' node."""
+        rag_node = RagRetrievalNode(mock_rag_port)
+        builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=rag_node)
+        workflow = builder.build()
+
+        # The compiled graph should expose node names
+        nodes = list(workflow.get_graph().nodes.keys())
+        assert "rag_retrieve" in nodes, f"Expected 'rag_retrieve' in {nodes}"
+
+    def test_workflow_without_rag_node_excludes_rag_retrieve(self, mock_mcp_client, mock_model):
+        """Workflow built without RagRetrievalNode should NOT include 'rag_retrieve'."""
+        builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=None)
+        workflow = builder.build()
+
+        nodes = list(workflow.get_graph().nodes.keys())
+        assert "rag_retrieve" not in nodes, f"'rag_retrieve' should not be in {nodes}"

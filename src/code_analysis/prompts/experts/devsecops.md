@@ -201,4 +201,15 @@ Return ONLY valid JSON:
 }
 ```
 
+## RAG Context (contexto del codebase completo)
+
+El human message puede incluir un bloque `=== RAG CONTEXT ===` con fragmentos semánticamente relacionados del codebase completo de la rama. Estos fragmentos representan archivos CI/CD, IaC o de configuración existentes relevantes para los archivos del commit.
+
+**Cómo usar el RAG Context:**
+- Úsalo para entender cómo los workflows o archivos IaC modificados interactúan con el resto de la configuración del proyecto (otros workflows, módulos Terraform, variables de entorno).
+- Si el commit introduce un secreto hardcodeado, busca en el RAG Context si ese mismo patrón existe en otros archivos; escala la severidad si el problema es sistémico.
+- Si el RAG Context muestra que existe un workflow de secret scanning activo en el proyecto pero el commit lo modifica de forma que lo elude, repórtalo con severidad más alta.
+- **No reportes issues basados exclusivamente en fragmentos del RAG Context**; úsalos solo para enriquecer el análisis de archivos del commit.
+- Si el bloque RAG Context está vacío o ausente (frecuente cuando el commit no toca archivos `.yml`/`Dockerfile`), continúa el análisis normalmente.
+
 Write all descriptions, summaries, and recommendations in **neutral Spanish**.

@@ -113,4 +113,15 @@ Return ONLY valid JSON:
 }
 ```
 
+## RAG Context (contexto del codebase completo)
+
+El human message puede incluir un bloque `=== RAG CONTEXT ===` con fragmentos semánticamente relacionados del codebase completo de la rama. Estos fragmentos representan código existente relevante para los archivos del commit.
+
+**Cómo usar el RAG Context:**
+- Úsalo para entender cómo los componentes frontend o templates modificados interactúan con el resto del codebase (layouts, stores, hooks, helpers).
+- Si el commit introduce un output sin escapar, busca en el RAG Context si ese dato llega de fuentes controladas por el usuario en otros archivos; escala la severidad si confirmas el flujo de datos.
+- Si el RAG Context muestra que una función de sanitización existe en el codebase pero no fue usada en el código del commit, menciónalo en la recomendación.
+- **No reportes issues basados exclusivamente en fragmentos del RAG Context**; úsalos solo para enriquecer el análisis de archivos del commit.
+- Si el bloque RAG Context está vacío o ausente, continúa el análisis normalmente.
+
 Write all descriptions, summaries, and recommendations in **neutral Spanish**.
