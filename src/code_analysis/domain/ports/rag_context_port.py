@@ -1,4 +1,5 @@
 """Port for retrieving RAG context chunks from the vector store."""
+
 from abc import ABC, abstractmethod
 from typing import Any
 

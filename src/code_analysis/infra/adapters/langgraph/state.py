@@ -10,7 +10,7 @@ from code_analysis.domain.entities.expert_result import ExpertIssue
 
 class AgentState(TypedDict):
     """State object passed between LangGraph nodes.
-    
+
     This TypedDict defines the complete state that flows through the
     workflow from MCP retrieval through expert analysis to final merge.
     """
@@ -28,7 +28,9 @@ class AgentState(TypedDict):
     mcp_error: NotRequired[str | None]
 
     # RAG context chunks (retrieved by RagRetrievalNode, consumed by expert nodes)
-    rag_chunks: NotRequired[list[dict[str, Any]]]  # {"file_path", "chunk_text", "distance"}
+    rag_chunks: NotRequired[
+        list[dict[str, Any]]
+    ]  # {"file_path", "chunk_text", "distance"}
 
     # Expert analysis results
     issues: list[ExpertIssue]

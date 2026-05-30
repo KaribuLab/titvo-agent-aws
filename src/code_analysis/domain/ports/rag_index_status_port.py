@@ -1,4 +1,5 @@
 """Port for checking whether a branch is indexed in the RAG store."""
+
 from abc import ABC, abstractmethod
 
 

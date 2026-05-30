@@ -35,9 +35,10 @@ class LambdaReportRepository(IReportRepository):
             raise Exception(
                 f"Failed to create report: {response['Payload'].read().decode('utf-8')}"
             )
-        
+
         output_payload = response["Payload"].read().decode("utf-8")
         LOGGER.info(
-            "Report created successfully %s", output_payload,
+            "Report created successfully %s",
+            output_payload,
         )
         return json.loads(output_payload)

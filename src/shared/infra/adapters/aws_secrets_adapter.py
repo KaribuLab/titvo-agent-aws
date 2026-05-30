@@ -5,6 +5,7 @@ from shared.domain.ports.secrets_provider import ISecretsProvider
 
 LOGGER = logging.getLogger(__name__)
 
+
 class AwsSecretsAdapter(ISecretsProvider):
     def __init__(self, client: Any, key_name: str):
         self.client = client

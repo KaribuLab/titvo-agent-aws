@@ -9,7 +9,6 @@ class AnalysisStatus(Enum):
     WARNING = "WARNING"
 
 
-
 @dataclass
 class IssueDto:
     path: str
@@ -21,6 +20,7 @@ class IssueDto:
     code: str
     summary: str
     recommendation: str
+
 
 @dataclass
 class ResultDto:

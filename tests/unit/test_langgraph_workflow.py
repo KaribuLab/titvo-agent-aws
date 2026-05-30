@@ -191,7 +191,7 @@ class TestMergeFindingsNode:
             "issues": [issue1, issue2],
         }
         result = node(state)
-        
+
         # Should be deduplicated to 1 issue
         final_output = result.get("final_output", {})
         assert len(final_output.get("issues", [])) == 1
@@ -248,22 +248,34 @@ class TestLangGraphWorkflowWithRag:
     @pytest.fixture
     def mock_rag_port(self):
         class _MockPort(IRagContextPort):
-            def configure(self, repo, branch): pass
-            def search(self, query, k): return []
-            def close(self): pass
+            def configure(self, repo, branch):
+                pass
+
+            def search(self, query, k):
+                return []
+
+            def close(self):
+                pass
+
         return _MockPort()
 
-    def test_workflow_includes_rag_retrieve_node(self, mock_mcp_client, mock_model, mock_rag_port):
+    def test_workflow_includes_rag_retrieve_node(
+        self, mock_mcp_client, mock_model, mock_rag_port
+    ):
         """Workflow built with a RagRetrievalNode should include 'rag_retrieve' node."""
         rag_node = RagRetrievalNode(mock_rag_port)
-        builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=rag_node)
+        builder = LangGraphWorkflowBuilder(
+            mock_mcp_client, mock_model, rag_node=rag_node
+        )
         workflow = builder.build()
 
         # The compiled graph should expose node names
         nodes = list(workflow.get_graph().nodes.keys())
         assert "rag_retrieve" in nodes, f"Expected 'rag_retrieve' in {nodes}"
 
-    def test_workflow_without_rag_node_excludes_rag_retrieve(self, mock_mcp_client, mock_model):
+    def test_workflow_without_rag_node_excludes_rag_retrieve(
+        self, mock_mcp_client, mock_model
+    ):
         """Workflow built without RagRetrievalNode should NOT include 'rag_retrieve'."""
         builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=None)
         workflow = builder.build()

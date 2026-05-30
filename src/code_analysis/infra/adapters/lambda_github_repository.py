@@ -11,6 +11,7 @@ from code_analysis.infra.adapters.lambda_payload_json import dumps_lambda_payloa
 
 LOGGER = logging.getLogger(__name__)
 
+
 class LambdaGitHubRepository(IGitHubRepository):
     def __init__(self, function_name: str):
         self.lambda_client = boto3.client("lambda")
@@ -41,9 +42,10 @@ class LambdaGitHubRepository(IGitHubRepository):
             raise Exception(
                 f"Failed to create report: {response['Payload'].read().decode('utf-8')}"
             )
-        
+
         output_payload = response["Payload"].read().decode("utf-8")
         LOGGER.info(
-            "GitHub issue created successfully %s", output_payload,
+            "GitHub issue created successfully %s",
+            output_payload,
         )
         return json.loads(output_payload)

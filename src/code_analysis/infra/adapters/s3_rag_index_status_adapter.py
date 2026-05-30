@@ -3,6 +3,7 @@
 Checks existence of {repo_path}/branches/{branch}/latest/meta.json
 using the same S3 path convention as the rag-indexer's S3ArtifactStoreAdapter.
 """
+
 import logging
 import os
 import re

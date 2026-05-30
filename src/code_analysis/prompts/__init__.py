@@ -7,7 +7,7 @@ from typing import Optional
 
 class PromptRegistry:
     """Registry for loading prompts from package resources.
-    
+
     All prompts are bundled with the agent package and loaded via
     importlib.resources. Changes to prompts require a new Docker build.
     """
@@ -22,35 +22,29 @@ class PromptRegistry:
     @cache
     def get_system_prompt(self) -> str:
         """Load the main system prompt."""
-        return resources.read_text(
-            "code_analysis.prompts", "system_prompt.md"
-        )
+        return resources.read_text("code_analysis.prompts", "system_prompt.md")
 
     @cache
     def get_content_template(self) -> str:
         """Load the content template for user messages."""
-        return resources.read_text(
-            "code_analysis.prompts", "content_template.md"
-        )
+        return resources.read_text("code_analysis.prompts", "content_template.md")
 
     @cache
     def get_orchestrator_prompt(self) -> str:
         """Load the orchestrator node prompt for LangGraph."""
-        return resources.read_text(
-            "code_analysis.prompts", "orchestrator_prompt.md"
-        )
+        return resources.read_text("code_analysis.prompts", "orchestrator_prompt.md")
 
     @cache
     def get_expert_prompt(self, expert_name: str) -> str:
         """Load an expert-specific prompt.
-        
+
         Args:
             expert_name: One of: prompt_hardening, owasp_api, owasp_web,
                         devsecops, code_vulnerabilities
-        
+
         Returns:
             The expert prompt content
-        
+
         Raises:
             ValueError: If expert_name is not recognized
         """
@@ -70,9 +64,7 @@ class PromptRegistry:
 
         file_path = expert_files[expert_name]
         # Read from experts subdirectory
-        return resources.read_text(
-            "code_analysis.prompts", file_path
-        )
+        return resources.read_text("code_analysis.prompts", file_path)
 
     def list_experts(self) -> list[str]:
         """Return list of available expert names."""

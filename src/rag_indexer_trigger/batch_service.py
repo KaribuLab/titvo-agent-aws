@@ -8,6 +8,7 @@ The HTTP batch-runner API mirrors the TypeScript batch.service.ts implementation
   POST /run-batch  — start a Docker container job
   POST /get-job-status — get the status of a job by jobId
 """
+
 import json
 import logging
 import os
@@ -103,7 +104,11 @@ class BatchService:
                 "networkMode": network_mode,
             }
         ).encode()
-        LOGGER.info("Submitting Docker job via batch-runner at %s: %s", self._runner_url, container_name)
+        LOGGER.info(
+            "Submitting Docker job via batch-runner at %s: %s",
+            self._runner_url,
+            container_name,
+        )
         data = self._http_post(f"{self._runner_url}/run-batch", payload)
         job_id: str = data.get("jobId", "")
         LOGGER.info("Docker job submitted, jobId=%s", job_id)

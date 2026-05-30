@@ -37,7 +37,9 @@ from code_analysis.infra.adapters.s3_sqlite_rag_context_adapter import (
     S3SqliteRagContextAdapter,
 )
 from logging_config import config
-from rag_indexer_trigger.rag_indexer_batch_trigger import create_rag_indexer_batch_trigger
+from rag_indexer_trigger.rag_indexer_batch_trigger import (
+    create_rag_indexer_batch_trigger,
+)
 from shared.infra.adapters.aws_configuration_adapter import AwsConfigurationAdapter
 from shared.infra.adapters.aws_secrets_adapter import AwsSecretsAdapter
 from shared.infra.services.encryption_service import EncryptionService
@@ -189,7 +191,12 @@ async def main():
     embedding_model = configuration_provider.get_value("embedding_model")
     embedding_api_key = configuration_provider.get_secret("embedding_api_key")
     rag_node: Optional[RagRetrievalNode] = None
-    if rag_indexer_bucket and embedding_provider and embedding_model and embedding_api_key:
+    if (
+        rag_indexer_bucket
+        and embedding_provider
+        and embedding_model
+        and embedding_api_key
+    ):
         rag_context_adapter = S3SqliteRagContextAdapter(
             s3_client=create_boto3_client("s3"),
             bucket_name=rag_indexer_bucket,

@@ -8,7 +8,7 @@ from code_analysis.domain.entities.expert_result import ExpertResult, FileConten
 
 class SecurityExpertPort(ABC):
     """Abstract base class for security expert analyzers.
-    
+
     Each expert specializes in a specific security domain (OWASP API,
     OWASP Web, DevSecOps, Code Vulnerabilities, Prompt Hardening).
     """
@@ -28,7 +28,7 @@ class SecurityExpertPort(ABC):
     @abstractmethod
     def get_file_patterns(self) -> list[str]:
         """Return file patterns this expert is interested in.
-        
+
         Returns empty list if expert should analyze all files.
         Examples: ['*.py', '*routes*'], ['*.yml', 'Dockerfile']
         """
@@ -37,10 +37,10 @@ class SecurityExpertPort(ABC):
     @abstractmethod
     def should_analyze_file(self, file_path: str) -> bool:
         """Determine if this file should be analyzed by this expert.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             True if expert should analyze this file
         """
@@ -55,13 +55,13 @@ class SecurityExpertPort(ABC):
         extra_args: dict[str, Any],
     ) -> ExpertResult:
         """Analyze files and return findings.
-        
+
         Args:
             files: List of file contents to analyze
             repository_url: Source repository URL
             commit_hash: Commit being analyzed
             extra_args: Additional parameters from task
-            
+
         Returns:
             ExpertResult with findings or error
         """
@@ -69,18 +69,17 @@ class SecurityExpertPort(ABC):
 
     def filter_files(self, files: list[FileContent]) -> list[FileContent]:
         """Filter files based on expert's patterns.
-        
+
         If no patterns match, returns all files (fallback).
         """
         patterns = self.get_file_patterns()
-        
+
         # No patterns defined - analyze all files
         if not patterns:
             return files
 
         filtered = [
-            f for f in files
-            if any(self._matches_pattern(f.path, p) for p in patterns)
+            f for f in files if any(self._matches_pattern(f.path, p) for p in patterns)
         ]
 
         # Fallback: if nothing matched, analyze all files
@@ -97,6 +96,7 @@ class SecurityExpertPort(ABC):
     def _matches_pattern(self, file_path: str, pattern: str) -> bool:
         """Check if file path matches pattern (simple glob support)."""
         import fnmatch
+
         return fnmatch.fnmatch(file_path.lower(), pattern.lower())
 
 

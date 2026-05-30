@@ -26,7 +26,7 @@ POLL_MAX_ATTEMPTS = 180  # hasta ~3 min (Lambda/SQS en LocalStack pueden ir lent
 
 class MCPRetrievalNode:
     """Node for retrieving files via MCP tools.
-    
+
     Executes:
     1. git.commit-files (async) - poll until complete
     2. files (sync) - for each file path retrieved
@@ -79,10 +79,12 @@ class MCPRetrievalNode:
             )
 
             # Fase 1a: encolar job — la respuesta es jobId + pollToolName, no rutas
-            phase1_raw = await git_commit_files_tool.ainvoke({
-                "repository": state["repository_url"],
-                "commitId": state["commit_hash"],
-            })
+            phase1_raw = await git_commit_files_tool.ainvoke(
+                {
+                    "repository": state["repository_url"],
+                    "commitId": state["commit_hash"],
+                }
+            )
             LOGGER.debug("[MCP Node] Phase 1 raw type: %s", type(phase1_raw))
 
             enqueue = self._coerce_dict(phase1_raw)
@@ -165,16 +167,20 @@ class MCPRetrievalNode:
             for file_path in file_paths:
                 try:
                     # Note: files tool only expects 'path' parameter
-                    file_result = await files_tool.ainvoke({
-                        "path": file_path,
-                    })
+                    file_result = await files_tool.ainvoke(
+                        {
+                            "path": file_path,
+                        }
+                    )
 
                     content = self._extract_file_content(file_result)
                     if content is not None:
-                        files_content.append({
-                            "path": file_path,
-                            "content": content,
-                        })
+                        files_content.append(
+                            {
+                                "path": file_path,
+                                "content": content,
+                            }
+                        )
                 except Exception as e:
                     LOGGER.warning("Failed to read file %s: %s", file_path, e)
                     # Continue with other files
@@ -212,6 +218,7 @@ class MCPRetrievalNode:
     def _sanitize_tool_name(self, name: str) -> str:
         """Sanitize tool name for OpenAI compatibility."""
         import re
+
         sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
         sanitized = re.sub(r"_+", "_", sanitized)
         return sanitized.strip("_")

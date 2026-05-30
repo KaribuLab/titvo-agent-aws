@@ -72,9 +72,7 @@ class AnalyseCodeUseCase:
                 _RAG_MAX_ATTEMPTS,
             )
             if status.is_succeeded:
-                LOGGER.info(
-                    "Full indexing completed for %s@%s", repo_url, branch
-                )
+                LOGGER.info("Full indexing completed for %s@%s", repo_url, branch)
                 return
             if status.is_failed:
                 raise RuntimeError(
@@ -91,9 +89,7 @@ class AnalyseCodeUseCase:
     ) -> None:
         """Fire-and-forget delta indexing. Errors are logged but do not propagate."""
         try:
-            if self.rag_index_status.is_commit_indexed(
-                repo_url, branch, commit_hash
-            ):
+            if self.rag_index_status.is_commit_indexed(repo_url, branch, commit_hash):
                 LOGGER.info(
                     "Commit %s already indexed for %s@%s — skipping delta trigger",
                     commit_hash[:7],
@@ -186,9 +182,7 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Sending message to agent: %s", message.content)
         agent_response = await self.agent.invoke(message)
         LOGGER.debug("Agent response: %s", agent_response.content)
-        self._trigger_delta_indexing(
-            task.repository_url, task.branch, task.commit_hash
-        )
+        self._trigger_delta_indexing(task.repository_url, task.branch, task.commit_hash)
         agent_response.content = self.__sanitize_content_response(
             agent_response.content
         )
@@ -211,7 +205,6 @@ class AnalyseCodeUseCase:
         LOGGER.info("Status: %s", status)
         result = {**result, **notifications_results}
         try:
-
             if status == AnalysisStatus.COMPLETED.value:
                 task.mark_completed(result, result.get("scaned_files"))
                 LOGGER.info("Marking task %s as completed", task_id)

@@ -1,6 +1,5 @@
 """Tests for FindingsMerger service."""
 
-
 from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
 from code_analysis.domain.services.findings_merger import FindingsMerger
 
@@ -67,12 +66,8 @@ class TestFindingsMerger:
             recommendation="Use auto-escaping",
         )
 
-        merger.add_expert_result(
-            ExpertResult("owasp_web", [issue1])
-        )
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue2])
-        )
+        merger.add_expert_result(ExpertResult("owasp_web", [issue1]))
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue2]))
 
         merged = merger.get_merged_issues()
         assert len(merged) == 1  # Deduplicated
@@ -104,12 +99,8 @@ class TestFindingsMerger:
             recommendation="Use bcrypt",
         )
 
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue1])
-        )
-        merger.add_expert_result(
-            ExpertResult("devsecops", [issue2])
-        )
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue1]))
+        merger.add_expert_result(ExpertResult("devsecops", [issue2]))
 
         merged = merger.get_merged_issues()
         assert len(merged) == 1
@@ -142,9 +133,7 @@ class TestFindingsMerger:
             recommendation="Fix",
         )
 
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue1, issue2])
-        )
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue1, issue2]))
 
         merged = merger.get_merged_issues()
         assert len(merged) == 2  # Not deduplicated
@@ -176,12 +165,8 @@ class TestFindingsMerger:
             recommendation="Validate path",
         )
 
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue1])
-        )
-        merger.add_expert_result(
-            ExpertResult("owasp_web", [issue2])
-        )
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue1]))
+        merger.add_expert_result(ExpertResult("owasp_web", [issue2]))
 
         merged = merger.get_merged_issues()
         assert len(merged) == 2  # Kept as separate issues
@@ -200,9 +185,7 @@ class TestFindingsMerger:
             code="eval(user_input)",
             recommendation="Remove eval",
         )
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue])
-        )
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue]))
 
         assert merger.get_final_status() == "FAILED"
 
@@ -220,9 +203,7 @@ class TestFindingsMerger:
             code="return str(e)",
             recommendation="Use generic messages",
         )
-        merger.add_expert_result(
-            ExpertResult("code_vulnerabilities", [issue])
-        )
+        merger.add_expert_result(ExpertResult("code_vulnerabilities", [issue]))
 
         assert merger.get_final_status() == "WARNING"
 
@@ -253,7 +234,7 @@ class TestFindingsMerger:
     def test_error_result_skipped(self):
         """Expert results with errors should be skipped."""
         merger = FindingsMerger()
-        
+
         good_issue = ExpertIssue(
             title="Good Finding",
             description="Valid issue",
@@ -265,10 +246,8 @@ class TestFindingsMerger:
             code="code",
             recommendation="Fix",
         )
-        
-        merger.add_expert_result(
-            ExpertResult("good_expert", [good_issue])
-        )
+
+        merger.add_expert_result(ExpertResult("good_expert", [good_issue]))
         merger.add_expert_result(
             ExpertResult("bad_expert", [], error="Connection failed")
         )

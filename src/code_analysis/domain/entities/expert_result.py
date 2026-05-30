@@ -18,7 +18,7 @@ class FileContent:
 @dataclass
 class ExpertIssue:
     """Represents a security issue found by an expert.
-    
+
     Attributes:
         title: Brief title of the vulnerability
         description: Detailed description in Spanish
@@ -69,11 +69,18 @@ class ExpertIssue:
     def from_dict(cls, data: dict[str, Any]) -> "ExpertIssue":
         """Create from dictionary, handling extra fields as metadata."""
         known_fields = {
-            "title", "description", "severity", "category",
-            "path", "line", "summary", "code", "recommendation",
+            "title",
+            "description",
+            "severity",
+            "category",
+            "path",
+            "line",
+            "summary",
+            "code",
+            "recommendation",
         }
         metadata = {k: v for k, v in data.items() if k not in known_fields}
-        
+
         return cls(
             title=data.get("title", "Unknown"),
             description=data.get("description", ""),
@@ -95,7 +102,7 @@ class ExpertIssue:
 @dataclass
 class ExpertResult:
     """Result from a single expert analysis.
-    
+
     Attributes:
         expert_name: Name of the expert that produced this result
         issues: List of security issues found
@@ -122,8 +129,7 @@ class ExpertResult:
             return None
         severity_order = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
         return max(
-            self.issues,
-            key=lambda i: severity_order.get(i.severity, 0)
+            self.issues, key=lambda i: severity_order.get(i.severity, 0)
         ).severity
 
     def to_dict(self) -> dict[str, Any]:

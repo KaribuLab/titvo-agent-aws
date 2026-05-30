@@ -143,6 +143,7 @@ class LangGraphWorkflowBuilder:
 
 class WorkflowBuildError(Exception):
     """Error when building the LangGraph workflow."""
+
     pass
 
 

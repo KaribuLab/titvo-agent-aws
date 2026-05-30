@@ -1,4 +1,5 @@
 """Tests for RagRetrievalNode."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,9 +51,21 @@ class TestRagRetrievalNode:
     @pytest.fixture
     def chunks(self):
         return [
-            {"file_path": "src/auth.py", "chunk_text": "def authenticate(): pass", "distance": 0.1},
-            {"file_path": "src/utils.py", "chunk_text": "def helper(): pass", "distance": 0.2},
-            {"file_path": "src/models.py", "chunk_text": "class User: pass", "distance": 0.3},
+            {
+                "file_path": "src/auth.py",
+                "chunk_text": "def authenticate(): pass",
+                "distance": 0.1,
+            },
+            {
+                "file_path": "src/utils.py",
+                "chunk_text": "def helper(): pass",
+                "distance": 0.2,
+            },
+            {
+                "file_path": "src/models.py",
+                "chunk_text": "class User: pass",
+                "distance": 0.3,
+            },
         ]
 
     @pytest.mark.asyncio
@@ -61,9 +74,11 @@ class TestRagRetrievalNode:
         mock_port = MockRagContextPort(search_results=chunks)
         node = RagRetrievalNode(mock_port)
 
-        state = _make_state(files=[
-            {"path": "src/main.py", "content": "import auth"},
-        ])
+        state = _make_state(
+            files=[
+                {"path": "src/main.py", "content": "import auth"},
+            ]
+        )
         result = await node(state)
 
         assert "rag_chunks" in result
@@ -100,9 +115,11 @@ class TestRagRetrievalNode:
         mock_port = MockRagContextPort(raise_on_search=True)
         node = RagRetrievalNode(mock_port)
 
-        state = _make_state(files=[
-            {"path": "src/app.py", "content": "print('hello')"},
-        ])
+        state = _make_state(
+            files=[
+                {"path": "src/app.py", "content": "print('hello')"},
+            ]
+        )
         result = await node(state)
 
         assert result == {"rag_chunks": []}
@@ -111,18 +128,24 @@ class TestRagRetrievalNode:
     async def test_deduplication(self, chunks):
         """Same chunk_text from multiple file queries should appear only once."""
         # Return same chunk for every file query
-        same_chunk = [{"file_path": "shared.py", "chunk_text": "shared code", "distance": 0.1}]
+        same_chunk = [
+            {"file_path": "shared.py", "chunk_text": "shared code", "distance": 0.1}
+        ]
         mock_port = MockRagContextPort(search_results=same_chunk)
         node = RagRetrievalNode(mock_port)
 
-        state = _make_state(files=[
-            {"path": "src/a.py", "content": "code a"},
-            {"path": "src/b.py", "content": "code b"},
-        ])
+        state = _make_state(
+            files=[
+                {"path": "src/a.py", "content": "code a"},
+                {"path": "src/b.py", "content": "code b"},
+            ]
+        )
         result = await node(state)
 
         texts = [c["chunk_text"] for c in result["rag_chunks"]]
-        assert len(texts) == len(set(texts)), "Duplicate chunk_text should be deduplicated"
+        assert len(texts) == len(set(texts)), (
+            "Duplicate chunk_text should be deduplicated"
+        )
 
     @pytest.mark.asyncio
     async def test_max_total_chunks_limit(self):
@@ -134,7 +157,9 @@ class TestRagRetrievalNode:
         mock_port = MockRagContextPort(search_results=many_chunks)
         node = RagRetrievalNode(mock_port)
 
-        files = [{"path": f"src/file{i}.py", "content": f"content {i}"} for i in range(20)]
+        files = [
+            {"path": f"src/file{i}.py", "content": f"content {i}"} for i in range(20)
+        ]
         state = _make_state(files=files)
         result = await node(state)
 

@@ -1,6 +1,5 @@
 """Tests for ExpertResult domain entities."""
 
-
 from code_analysis.domain.entities.expert_result import (
     ExpertIssue,
     ExpertResult,
@@ -176,14 +175,26 @@ class TestExpertResult:
         """Max severity should return highest."""
         issues = [
             ExpertIssue(
-                title="Low", description="Low",
-                severity="LOW", category="X", path="a.py", line=1,
-                summary="X", code="x", recommendation="Y",
+                title="Low",
+                description="Low",
+                severity="LOW",
+                category="X",
+                path="a.py",
+                line=1,
+                summary="X",
+                code="x",
+                recommendation="Y",
             ),
             ExpertIssue(
-                title="Critical", description="Critical",
-                severity="CRITICAL", category="Y", path="b.py", line=2,
-                summary="Y", code="y", recommendation="Z",
+                title="Critical",
+                description="Critical",
+                severity="CRITICAL",
+                category="Y",
+                path="b.py",
+                line=2,
+                summary="Y",
+                code="y",
+                recommendation="Z",
             ),
         ]
         result = ExpertResult(

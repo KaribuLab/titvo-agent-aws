@@ -46,6 +46,7 @@ class MergeFindingsNode:
                 # Recreate ExpertIssue-like object for merger
                 # (issues are already ExpertIssue objects from expert nodes)
                 from code_analysis.domain.entities.expert_result import ExpertResult
+
                 result = ExpertResult(
                     expert_name="merged",
                     issues=issues,
@@ -72,8 +73,7 @@ class MergeFindingsNode:
 
             # Determine status
             has_critical_or_high = any(
-                issue.severity in ("CRITICAL", "HIGH")
-                for issue in unique_issues
+                issue.severity in ("CRITICAL", "HIGH") for issue in unique_issues
             )
 
             if has_critical_or_high:

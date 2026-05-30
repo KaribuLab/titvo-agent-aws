@@ -26,14 +26,14 @@ LOGGER = logging.getLogger(__name__)
 def _max_file_chars(num_files: int) -> int:
     """Return per-file char budget so total prompt fits in a 128k-token model."""
     if num_files <= 5:
-        return 30_000   # ≈ 7 500 tokens/file → ~37 k total
+        return 30_000  # ≈ 7 500 tokens/file → ~37 k total
     if num_files <= 10:
-        return 15_000   # ≈ 3 750 tokens/file → ~37 k total
+        return 15_000  # ≈ 3 750 tokens/file → ~37 k total
     if num_files <= 20:
-        return 8_000    # ≈ 2 000 tokens/file → ~40 k total
+        return 8_000  # ≈ 2 000 tokens/file → ~40 k total
     if num_files <= 40:
-        return 5_000    # ≈ 1 250 tokens/file → ~50 k total
-    return 3_000        # ≈  750 tokens/file → fits very large commits
+        return 5_000  # ≈ 1 250 tokens/file → ~50 k total
+    return 3_000  # ≈  750 tokens/file → fits very large commits
 
 
 class BaseExpertNode(ABC):
@@ -69,10 +69,8 @@ class BaseExpertNode(ABC):
             return True
 
         import fnmatch
-        return any(
-            fnmatch.fnmatch(file_path.lower(), p.lower())
-            for p in patterns
-        )
+
+        return any(fnmatch.fnmatch(file_path.lower(), p.lower()) for p in patterns)
 
     def _filter_files(
         self,
@@ -83,10 +81,7 @@ class BaseExpertNode(ABC):
         if not patterns:
             return files
 
-        filtered = [
-            f for f in files
-            if self.should_analyze_file(f["path"])
-        ]
+        filtered = [f for f in files if self.should_analyze_file(f["path"])]
 
         # Fallback: if nothing matched, analyze all
         if not filtered and files:
@@ -130,7 +125,8 @@ class BaseExpertNode(ABC):
             # Filter RAG chunks by this expert's file patterns and append
             all_rag_chunks = state.get("rag_chunks", [])
             filtered_rag = [
-                c for c in all_rag_chunks
+                c
+                for c in all_rag_chunks
                 if self.should_analyze_file(c.get("file_path", ""))
             ]
             rag_content = self._format_rag_chunks(filtered_rag)
@@ -226,19 +222,16 @@ class BaseExpertNode(ABC):
         last_nl = raw_head.rfind("\n")
         head = content[: last_nl + 1] if last_nl > 0 else raw_head
 
-        rest = content[len(head):]
+        rest = content[len(head) :]
         tail_budget = max_chars - len(head)
 
-        structural_lines = [
-            line for line in rest.splitlines() if is_structural(line)
-        ]
+        structural_lines = [line for line in rest.splitlines() if is_structural(line)]
         tail = "\n".join(structural_lines)[:tail_budget]
 
         if tail:
             omitted = len(rest) - len(tail)
             separator = (
-                f"\n# [{omitted:,} chars omitted"
-                " — structural overview of remainder]\n"
+                f"\n# [{omitted:,} chars omitted — structural overview of remainder]\n"
             )
             return head + separator + tail, True
 
