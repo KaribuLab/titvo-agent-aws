@@ -13,7 +13,6 @@ import tempfile
 from typing import Any
 
 import botocore.exceptions
-import sqlite_vec
 from langchain_openai import OpenAIEmbeddings
 
 from code_analysis.domain.ports.rag_context_port import IRagContextPort
@@ -137,7 +136,7 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             or not self._embedding_api_key
         ):
             LOGGER.warning(
-                "Embedding config missing (provider/model/key) — skipping RAG enrichment"
+                "Embedding config missing (provider/model/key) — skipping RAG"
             )
             return None
 
@@ -166,6 +165,15 @@ class S3SqliteRagContextAdapter(IRagContextPort):
         self, db_path: str, embedding: list[float], k: int
     ) -> list[dict[str, Any]]:
         """Run vector similarity search against the SQLite-vec index."""
+        try:
+            import sqlite_vec  # lazy import: graceful if not installed
+        except ImportError:
+            LOGGER.warning(
+                "sqlite_vec not installed — RAG context unavailable. "
+                "Install sqlite-vec or rebuild the agent image."
+            )
+            return []
+
         conn = sqlite3.connect(db_path)
         try:
             conn.enable_load_extension(True)
