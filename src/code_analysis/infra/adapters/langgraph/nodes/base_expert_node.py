@@ -13,9 +13,27 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from code_analysis import prompts as prompt_registry
 from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
+from code_analysis.infra.adapters.langgraph.nodes._structural_lines import is_structural
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
+
+# Adaptive per-file character budget based on commit size.
+# Ensures the total prompt stays within the model's context window.
+# Ratios: chars ÷ 4 ≈ tokens (rough estimate).
+
+
+def _max_file_chars(num_files: int) -> int:
+    """Return per-file char budget so total prompt fits in a 128k-token model."""
+    if num_files <= 5:
+        return 30_000   # ≈ 7 500 tokens/file → ~37 k total
+    if num_files <= 10:
+        return 15_000   # ≈ 3 750 tokens/file → ~37 k total
+    if num_files <= 20:
+        return 8_000    # ≈ 2 000 tokens/file → ~40 k total
+    if num_files <= 40:
+        return 5_000    # ≈ 1 250 tokens/file → ~50 k total
+    return 3_000        # ≈  750 tokens/file → fits very large commits
 
 
 class BaseExpertNode(ABC):
@@ -165,14 +183,66 @@ class BaseExpertNode(ABC):
             }
 
     def _format_files(self, files: list[dict[str, str]]) -> str:
-        """Format commit files for LLM consumption."""
+        """Format commit files for LLM consumption.
+
+        Uses an adaptive per-file char budget (smaller budget for large commits)
+        and structure-aware truncation so that even truncated files preserve
+        imports + function/class signatures alongside as much body as fits.
+        """
+        limit = _max_file_chars(len(files))
         parts = []
         for f in files:
+            content, truncated = self._smart_truncate(f["content"], limit)
             parts.append(f"=== FILE: {f['path']} ===")
-            parts.append(f["content"])
+            parts.append(content)
+            if truncated:
+                parts.append(
+                    "[... file truncated: structural signature preserved above ...]"
+                )
             parts.append("=== END FILE ===")
             parts.append("")
         return "\n".join(parts)
+
+    @staticmethod
+    def _smart_truncate(content: str, max_chars: int) -> tuple[str, bool]:
+        """Truncate file content while preserving structural lines.
+
+        Strategy (when content > max_chars):
+        - First 70% of budget: verbatim content from the beginning
+          (imports + first functions/classes are typically here).
+        - Remaining 30%: structural-only summary of what was cut
+          (function/class signatures from the skipped portion).
+
+        This ensures the LLM always sees:
+        1. All imports and early function bodies (complete logic flow).
+        2. The names and signatures of any functions/classes it can't read in full.
+        """
+        if len(content) <= max_chars:
+            return content, False
+
+        head_limit = max_chars * 7 // 10
+        # Extend to last complete line within head_limit
+        raw_head = content[:head_limit]
+        last_nl = raw_head.rfind("\n")
+        head = content[: last_nl + 1] if last_nl > 0 else raw_head
+
+        rest = content[len(head):]
+        tail_budget = max_chars - len(head)
+
+        structural_lines = [
+            line for line in rest.splitlines() if is_structural(line)
+        ]
+        tail = "\n".join(structural_lines)[:tail_budget]
+
+        if tail:
+            omitted = len(rest) - len(tail)
+            separator = (
+                f"\n# [{omitted:,} chars omitted"
+                " — structural overview of remainder]\n"
+            )
+            return head + separator + tail, True
+
+        return head, True
 
     def _format_rag_chunks(self, chunks: list[dict]) -> str:
         """Format RAG context chunks for LLM consumption.

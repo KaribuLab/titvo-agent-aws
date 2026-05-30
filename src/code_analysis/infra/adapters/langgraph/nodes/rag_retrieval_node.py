@@ -12,6 +12,9 @@ import logging
 from typing import Any
 
 from code_analysis.domain.ports.rag_context_port import IRagContextPort
+from code_analysis.infra.adapters.langgraph.nodes._structural_lines import (
+    extract_structural_lines,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
@@ -19,15 +22,16 @@ LOGGER = logging.getLogger(__name__)
 _MAX_CHUNKS_TOTAL = 30
 _CHUNKS_PER_FILE = 3
 _MAX_FILES_TO_QUERY = 10
-_QUERY_CONTENT_CHARS = 400
+_MAX_STRUCTURAL_LINES = 40
+_FALLBACK_QUERY_CHARS = 400
 
 
 class RagRetrievalNode:
     """Retrieves RAG context chunks for all commit files.
 
-    For each file (up to _MAX_FILES_TO_QUERY), searches the vector store
-    with a query of "{path}\\n{content[:400]}". Deduplicates by chunk_text
-    and limits total chunks to _MAX_CHUNKS_TOTAL.
+    For each file (up to _MAX_FILES_TO_QUERY), builds a structural query
+    (imports + function/class signatures) and searches the vector store.
+    Deduplicates by chunk_text and limits total chunks to _MAX_CHUNKS_TOTAL.
     """
 
     def __init__(self, rag_context: IRagContextPort):
@@ -66,7 +70,7 @@ class RagRetrievalNode:
             if len(results) >= _MAX_CHUNKS_TOTAL:
                 break
 
-            query = f"{file['path']}\n{file['content'][:_QUERY_CONTENT_CHARS]}"
+            query = self._build_file_query(file["path"], file["content"])
             chunks = self._rag_context.search(query, k=_CHUNKS_PER_FILE)
 
             for chunk in chunks:
@@ -78,3 +82,20 @@ class RagRetrievalNode:
                     results.append(chunk)
 
         return results
+
+    @staticmethod
+    def _build_file_query(path: str, content: str) -> str:
+        """Build an embedding query from the file's structural signature.
+
+        Extracts imports and function/class definitions — lines that carry
+        the most semantic signal — instead of raw content[:N]. Falls back to
+        the first _FALLBACK_QUERY_CHARS if no structural lines are found.
+
+        Detection covers Python, JS/TS, Java, Kotlin, Go, Rust, C#, Ruby, PHP,
+        Swift, C/C++, SQL, Dockerfile, Terraform/HCL, Shell, and more
+        (see _structural_lines.py).
+        """
+        structural = extract_structural_lines(content, max_lines=_MAX_STRUCTURAL_LINES)
+        if structural:
+            return f"{path}\n" + "\n".join(structural)
+        return f"{path}\n{content[:_FALLBACK_QUERY_CHARS]}"

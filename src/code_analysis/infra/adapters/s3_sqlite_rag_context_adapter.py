@@ -181,13 +181,15 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             conn.enable_load_extension(False)
 
             cursor = conn.cursor()
+            # vec0 KNN queries require k = ? in WHERE (not just LIMIT ?)
+            # when selecting auxiliary columns alongside the vector column.
             cursor.execute(
                 """
                 SELECT file_path, chunk_text, distance
                 FROM chunks
                 WHERE embedding MATCH ?
+                  AND k = ?
                 ORDER BY distance
-                LIMIT ?
                 """,
                 (sqlite_vec.serialize_float32(embedding), k),
             )
