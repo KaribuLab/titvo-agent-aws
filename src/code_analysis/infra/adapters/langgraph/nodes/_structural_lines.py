@@ -75,10 +75,10 @@ _STRUCTURAL_RE = re.compile(
     r"|\brequire_once\s+"                        # PHP
     r"|\binclude\s+"                             # Ruby, PHP, C (via preprocessor rule)
     r"|\binclude_once\s+"                        # PHP
-    r"|\b#\s*include\b"                          # C/C++ #include
-    r"|\b#\s*define\b"                           # C/C++ #define
-    r"|\b#\s*pragma\b"                           # C/C++ #pragma
-    r"|\b#\s*if(?:n?def)?\b"                    # C/C++ conditional compilation
+    r"|#\s*include\b"                            # C/C++ #include
+    r"|#\s*define\b"                             # C/C++ #define
+    r"|#\s*pragma\b"                             # C/C++ #pragma
+    r"|#\s*if(?:n?def)?\b"                      # C/C++ conditional compilation
     r"|"
 
     # ── 6. JS/TS-specific ────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ _STRUCTURAL_RE = re.compile(
     r"|\bfunction\s+\w+\s*(?:\(\s*\))?\s*\{"    # function name() {
 
     r")",
-    re.VERBOSE | re.IGNORECASE,
+    re.IGNORECASE,
 )
 
 
