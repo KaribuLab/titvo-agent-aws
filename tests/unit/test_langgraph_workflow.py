@@ -272,6 +272,7 @@ class TestLangGraphWorkflowWithRag:
         # The compiled graph should expose node names
         nodes = list(workflow.get_graph().nodes.keys())
         assert "rag_retrieve" in nodes, f"Expected 'rag_retrieve' in {nodes}"
+        assert "expert_owasp_mobile" in nodes
 
     def test_workflow_without_rag_node_excludes_rag_retrieve(
         self, mock_mcp_client, mock_model
@@ -282,3 +283,17 @@ class TestLangGraphWorkflowWithRag:
 
         nodes = list(workflow.get_graph().nodes.keys())
         assert "rag_retrieve" not in nodes, f"'rag_retrieve' should not be in {nodes}"
+        assert "expert_owasp_mobile" in nodes
+
+    def test_workflow_chains_owasp_mobile_between_web_and_devsecops(
+        self, mock_mcp_client, mock_model
+    ):
+        """OWASP Mobile should run after web and before DevSecOps."""
+        builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=None)
+        workflow = builder.build()
+
+        edges = workflow.get_graph().edges
+        edge_pairs = {(edge.source, edge.target) for edge in edges}
+
+        assert ("expert_owasp_web", "expert_owasp_mobile") in edge_pairs
+        assert ("expert_owasp_mobile", "expert_devsecops") in edge_pairs

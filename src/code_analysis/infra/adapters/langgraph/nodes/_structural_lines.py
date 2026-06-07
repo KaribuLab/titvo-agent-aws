@@ -27,7 +27,7 @@ _STRUCTURAL_RE = re.compile(
     # One or more modifiers can precede a definition keyword.
     r"(?:(?:public|private|protected|internal|static|abstract|sealed|final|"
     r"override|open|companion|inline|external|suspend|operator|infix|"
-    r"readonly|virtual|native|synchronized|volatile|transient)\s+)+"
+    r"readonly|virtual|native|synchronized|volatile|transient|pub)\s+)+"
     r"|"
     # ── 2. Function / method definitions ────────────────────────────────────
     r"\basync\s+def\s+"  # Python async def
@@ -50,7 +50,7 @@ _STRUCTURAL_RE = re.compile(
     r"|\brecord\s+"  # Java 16+, Kotlin
     r"|\bobject\s+"  # Kotlin object, Scala object
     r"|\bimpl\s+"  # Rust (impl Trait for Type)
-    r"|\btype\s+\w+\s*[={<]"  # Go `type X struct{…}`, TS `type X =`
+    r"|\btype\s+\w+\s*(?:[={<]|(?:struct|interface|enum)\b)"  # Go, TS
     r"|\btypedef\s+"  # C/C++
     r"|\balias\s+"  # Ruby alias, Swift typealias
     r"|"

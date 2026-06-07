@@ -2,13 +2,11 @@
 
 import pytest
 
-from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
-    BaseExpertNode,
-)
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
     CodeVulnerabilitiesNode,
     DevSecOpsNode,
     OwaspApiNode,
+    OwaspMobileNode,
     OwaspWebNode,
     PromptHardeningNode,
     create_expert_nodes,
@@ -104,6 +102,44 @@ class TestDevSecOpsNode:
         assert node.should_analyze_file("main.tf")
 
 
+class TestOwaspMobileNode:
+    """Tests for OWASP Mobile expert."""
+
+    @pytest.fixture
+    def node(self):
+        return OwaspMobileNode(None)
+
+    def test_expert_name(self, node):
+        assert node.expert_name == "owasp_mobile"
+
+    def test_mobile_file_patterns(self, node):
+        patterns = node.get_file_patterns()
+        assert "*AndroidManifest.xml" in patterns
+        assert "*Info.plist" in patterns
+        assert "*.dart" in patterns
+        assert "*.tsx" in patterns
+
+    def test_matches_android_files(self, node):
+        assert node.should_analyze_file("android/app/src/main/AndroidManifest.xml")
+        assert node.should_analyze_file(
+            "app/src/main/res/xml/network_security_config.xml"
+        )
+        assert node.should_analyze_file("android/app/build.gradle")
+        assert node.should_analyze_file("app/src/main/java/com/example/Auth.kt")
+
+    def test_matches_ios_files(self, node):
+        assert node.should_analyze_file("ios/App/Info.plist")
+        assert node.should_analyze_file("ios/App/App.entitlements")
+        assert node.should_analyze_file("ios/App/AuthStore.swift")
+        assert node.should_analyze_file("ios/Podfile")
+
+    def test_matches_cross_platform_mobile_files(self, node):
+        assert node.should_analyze_file("pubspec.yaml")
+        assert node.should_analyze_file("lib/main.dart")
+        assert node.should_analyze_file("app.json")
+        assert node.should_analyze_file("src/screens/Login.tsx")
+
+
 class TestCodeVulnerabilitiesNode:
     """Tests for Code Vulnerabilities expert."""
 
@@ -126,14 +162,27 @@ class TestCreateExpertNodes:
 
     def test_creates_all_experts(self):
         nodes = create_expert_nodes(None)
-        assert len(nodes) == 5
+        assert len(nodes) == 6
 
         names = [n.expert_name for n in nodes]
         assert "prompt_hardening" in names
         assert "owasp_api" in names
         assert "owasp_web" in names
+        assert "owasp_mobile" in names
         assert "devsecops" in names
         assert "code_vulnerabilities" in names
+
+    def test_expert_order(self):
+        nodes = create_expert_nodes(None)
+        names = [n.expert_name for n in nodes]
+        assert names == [
+            "prompt_hardening",
+            "owasp_api",
+            "owasp_web",
+            "owasp_mobile",
+            "devsecops",
+            "code_vulnerabilities",
+        ]
 
 
 class TestFileFiltering:
@@ -165,12 +214,13 @@ class TestFileFiltering:
 
     def test_fallback_when_no_matches(self, sample_files):
         """When no files match patterns, should return all files."""
-        # Create node with patterns that won't match
-        node = OwaspApiNode(None)
-        # Mock patterns to something that won't match
-        node._file_patterns = ["*nonexistent*"]
+        class NoMatchNode(OwaspApiNode):
+            def get_file_patterns(self) -> list[str]:
+                return ["*nonexistent*"]
 
-        filtered = node.filter_files(
+        node = NoMatchNode(None)
+
+        filtered = node._filter_files(
             [
                 {"path": "file1.txt", "content": ""},
                 {"path": "file2.txt", "content": ""},

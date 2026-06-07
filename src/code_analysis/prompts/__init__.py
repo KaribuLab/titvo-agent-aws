@@ -40,7 +40,7 @@ class PromptRegistry:
 
         Args:
             expert_name: One of: prompt_hardening, owasp_api, owasp_web,
-                        devsecops, code_vulnerabilities
+                        owasp_mobile, devsecops, code_vulnerabilities
 
         Returns:
             The expert prompt content
@@ -52,6 +52,7 @@ class PromptRegistry:
             "prompt_hardening": "experts/prompt_hardening.md",
             "owasp_api": "experts/owasp_api.md",
             "owasp_web": "experts/owasp_web.md",
+            "owasp_mobile": "experts/owasp_mobile.md",
             "devsecops": "experts/devsecops.md",
             "code_vulnerabilities": "experts/code_vulnerabilities.md",
         }
@@ -72,6 +73,7 @@ class PromptRegistry:
             "prompt_hardening",
             "owasp_api",
             "owasp_web",
+            "owasp_mobile",
             "devsecops",
             "code_vulnerabilities",
         ]
@@ -107,3 +109,8 @@ def get_orchestrator_prompt() -> str:
 def get_expert_prompt(expert_name: str) -> str:
     """Load an expert-specific prompt."""
     return get_registry().get_expert_prompt(expert_name)
+
+
+def list_experts() -> list[str]:
+    """Return list of available expert names."""
+    return get_registry().list_experts()

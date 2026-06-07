@@ -45,7 +45,7 @@ class TestPromptRegistry:
     def test_all_expert_prompts_load(self):
         """All expert prompts should load successfully."""
         expert_names = prompts.list_experts()
-        assert len(expert_names) == 5
+        assert len(expert_names) == 6
 
         for expert_name in expert_names:
             prompt = prompts.get_expert_prompt(expert_name)
@@ -65,6 +65,10 @@ class TestPromptRegistry:
         # OWASP Web
         oweb = prompts.get_expert_prompt("owasp_web")
         assert "OWASP Web" in oweb or "Web Top 10" in oweb
+
+        # OWASP Mobile
+        omobile = prompts.get_expert_prompt("owasp_mobile")
+        assert "OWASP Mobile" in omobile or "MASVS" in omobile
 
         # DevSecOps
         dev = prompts.get_expert_prompt("devsecops")
@@ -89,6 +93,7 @@ class TestPromptRegistry:
         assert "prompt_hardening" in experts
         assert "owasp_api" in experts
         assert "owasp_web" in experts
+        assert "owasp_mobile" in experts
         assert "devsecops" in experts
         assert "code_vulnerabilities" in experts
 

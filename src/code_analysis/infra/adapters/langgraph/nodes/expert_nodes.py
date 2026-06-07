@@ -65,6 +65,42 @@ class OwaspWebNode(BaseExpertNode):
         ]
 
 
+class OwaspMobileNode(BaseExpertNode):
+    """Expert node for OWASP Mobile security analysis."""
+
+    @property
+    def expert_name(self) -> str:
+        return "owasp_mobile"
+
+    def get_file_patterns(self) -> list[str]:
+        """Focus on Android, iOS, Flutter, and React Native files."""
+        return [
+            "*AndroidManifest.xml",
+            "*network_security_config.xml",
+            "*.kt",
+            "*.kts",
+            "*.java",
+            "*build.gradle",
+            "*settings.gradle",
+            "*proguard-rules.pro",
+            "*Info.plist",
+            "*.entitlements",
+            "*.swift",
+            "*.m",
+            "*.mm",
+            "*Podfile",
+            "*Package.swift",
+            "*pubspec.yaml",
+            "*.dart",
+            "*app.json",
+            "*app.config.*",
+            "*metro.config.*",
+            "*react-native.config.*",
+            "*.tsx",
+            "*.jsx",
+        ]
+
+
 class DevSecOpsNode(BaseExpertNode):
     """Expert node for CI/CD, IaC, and container security."""
 
@@ -112,6 +148,7 @@ EXPERT_CLASSES = {
     "prompt_hardening": PromptHardeningNode,
     "owasp_api": OwaspApiNode,
     "owasp_web": OwaspWebNode,
+    "owasp_mobile": OwaspMobileNode,
     "devsecops": DevSecOpsNode,
     "code_vulnerabilities": CodeVulnerabilitiesNode,
 }
@@ -125,6 +162,7 @@ def create_expert_nodes(
         PromptHardeningNode(model),
         OwaspApiNode(model),
         OwaspWebNode(model),
+        OwaspMobileNode(model),
         DevSecOpsNode(model),
         CodeVulnerabilitiesNode(model),
     ]

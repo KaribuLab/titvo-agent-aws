@@ -219,7 +219,7 @@ class MCPRetrievalNode:
         """Sanitize tool name for OpenAI compatibility."""
         import re
 
-        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+        sanitized = re.sub(r"[^a-zA-Z0-9]", "_", name)
         sanitized = re.sub(r"_+", "_", sanitized)
         return sanitized.strip("_")
 
