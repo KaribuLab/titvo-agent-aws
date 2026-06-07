@@ -21,6 +21,8 @@ class AgentState(TypedDict):
     branch: str
     commit_hash: str
     extra_args: dict[str, Any]
+    scan_mode: NotRequired[str]
+    scan_ref: NotRequired[str]
 
     # MCP phase results
     files: list[dict[str, str]]  # List of {"path": str, "content": str}

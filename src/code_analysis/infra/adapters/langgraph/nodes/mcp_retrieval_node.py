@@ -50,6 +50,7 @@ class MCPRetrievalNode:
                 state["repository_url"],
                 state["commit_hash"],
             )
+            scan_mode = state.get("scan_mode", "commit") or "commit"
 
             # Phase 1: Call git.commit-files
             LOGGER.debug("[MCP Node] Getting tools from MCP client...")
@@ -79,12 +80,15 @@ class MCPRetrievalNode:
             )
 
             # Fase 1a: encolar job — la respuesta es jobId + pollToolName, no rutas
-            phase1_raw = await git_commit_files_tool.ainvoke(
-                {
-                    "repository": state["repository_url"],
-                    "commitId": state["commit_hash"],
-                }
-            )
+            git_files_input = {
+                "repository": state["repository_url"],
+                "commitId": state["commit_hash"],
+                "scanMode": scan_mode,
+            }
+            if state.get("branch"):
+                git_files_input["branch"] = state["branch"]
+
+            phase1_raw = await git_commit_files_tool.ainvoke(git_files_input)
             LOGGER.debug("[MCP Node] Phase 1 raw type: %s", type(phase1_raw))
 
             enqueue = self._coerce_dict(phase1_raw)
@@ -131,7 +135,9 @@ class MCPRetrievalNode:
                     "files": [],
                 }
 
-            file_paths = self._extract_file_paths(polled.get("payload"))
+            poll_payload = polled.get("payload")
+            file_paths = self._extract_file_paths(poll_payload)
+            storage_prefix = self._extract_storage_prefix(poll_payload)
             LOGGER.info(
                 "[MCP Node] Retrieved %d file paths: %s",
                 len(file_paths),
@@ -177,7 +183,9 @@ class MCPRetrievalNode:
                     if content is not None:
                         files_content.append(
                             {
-                                "path": file_path,
+                                "path": self._normalize_storage_path(
+                                    file_path, storage_prefix
+                                ),
                                 "content": content,
                             }
                         )
@@ -258,6 +266,43 @@ class MCPRetrievalNode:
             return self._extract_file_paths(parsed)
 
         return []
+
+    def _extract_storage_prefix(self, result: Any) -> str | None:
+        """Extract storagePrefix metadata from poll result."""
+        if isinstance(result, str):
+            try:
+                parsed = json.loads(result)
+            except json.JSONDecodeError:
+                return None
+            return self._extract_storage_prefix(parsed)
+
+        if not isinstance(result, dict):
+            return None
+
+        data = result.get("data")
+        if isinstance(data, dict):
+            for key in ("storagePrefix", "storage_prefix"):
+                value = data.get(key)
+                if isinstance(value, str) and value:
+                    return value.rstrip("/")
+
+        for key in ("storagePrefix", "storage_prefix"):
+            value = result.get(key)
+            if isinstance(value, str) and value:
+                return value.rstrip("/")
+
+        return None
+
+    def _normalize_storage_path(
+        self, file_path: str, storage_prefix: str | None
+    ) -> str:
+        """Return repository-relative path when a full-scan storage prefix is known."""
+        if not storage_prefix:
+            return file_path
+        prefix = f"{storage_prefix.rstrip('/')}/"
+        if file_path.startswith(prefix):
+            return file_path[len(prefix) :]
+        return file_path
 
     async def _poll_git_commit_job(
         self,

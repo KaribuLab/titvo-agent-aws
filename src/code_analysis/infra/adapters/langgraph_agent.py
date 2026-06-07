@@ -78,7 +78,7 @@ class LangGraphAgent(AbstractAgent):
                 {
                     "titvo-mcp-server": {
                         "transport": "streamable_http",
-                        "url": "http://localhost:3000/mcp",  # Default, override in invoke
+                        "url": "http://localhost:3000/mcp",
                     }
                 }
             )
@@ -107,8 +107,14 @@ class LangGraphAgent(AbstractAgent):
             raise RuntimeError("Agent not initialized. Call invoke() first.")
 
         try:
-            # Parse message content for task parameters
+            # Parse message content for task parameters, then overlay structured
+            # metadata from the use case. Operational values must not depend only
+            # on prompt parsing.
             params = self._parse_message_content(message.content)
+            if message.metadata:
+                params.update(
+                    {k: v for k, v in message.metadata.items() if v is not None}
+                )
 
             LOGGER.info(
                 "[LangGraphAgent] Starting analysis for %s @ %s",
@@ -123,6 +129,8 @@ class LangGraphAgent(AbstractAgent):
                 "branch": params.get("branch", ""),
                 "commit_hash": params.get("commit_hash", ""),
                 "extra_args": params.get("extra_args", {}),
+                "scan_mode": params.get("scan_mode", "commit"),
+                "scan_ref": params.get("scan_ref", params.get("branch", "")),
                 "files": [],
                 "scaned_files": 0,
                 "issues": [],

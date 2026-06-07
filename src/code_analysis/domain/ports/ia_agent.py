@@ -10,6 +10,7 @@ M = TypeVar("M")
 class AgentMessage:
     role: str
     content: str
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass

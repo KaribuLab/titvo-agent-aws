@@ -78,6 +78,70 @@ class TestMCPRetrievalNode:
         content = node._extract_file_content(result)
         assert content == "print('hello')"
 
+    def test_extract_and_normalize_storage_prefix(self, node):
+        payload = {
+            "status": "SUCCESS",
+            "filesPaths": ["full/job-1/src/app.py"],
+            "storagePrefix": "full/job-1",
+        }
+
+        assert node._extract_storage_prefix(payload) == "full/job-1"
+        assert node._normalize_storage_path(
+            "full/job-1/src/app.py", "full/job-1"
+        ) == "src/app.py"
+
+    @pytest.mark.asyncio
+    async def test_full_scan_invokes_mcp_with_scan_mode_and_normalizes_paths(self):
+        git_tool = MagicMock()
+        git_tool.name = "mcp.tool.git.commit-files"
+        git_tool.ainvoke = AsyncMock(return_value={"jobId": "job-1"})
+
+        poll_tool = MagicMock()
+        poll_tool.name = "mcp.tool.git.commit-files.poll"
+        poll_tool.ainvoke = AsyncMock(
+            return_value={
+                "status": "SUCCESS",
+                "filesPaths": ["full/job-1/src/app.py"],
+                "storagePrefix": "full/job-1",
+            }
+        )
+
+        files_tool = MagicMock()
+        files_tool.name = "mcp.tool.files"
+        files_tool.ainvoke = AsyncMock(return_value={"content": "print('hello')"})
+
+        client = MagicMock()
+        client.get_tools = AsyncMock(return_value=[git_tool, poll_tool, files_tool])
+
+        node = MCPRetrievalNode(client)
+        result = await node(
+            {
+                "task_id": "task-1",
+                "repository_url": "https://github.com/org/repo",
+                "branch": "main",
+                "commit_hash": "abc123",
+                "extra_args": {},
+                "scan_mode": "full",
+                "scan_ref": "main",
+                "files": [],
+                "scaned_files": 0,
+                "issues": [],
+            }
+        )
+
+        git_tool.ainvoke.assert_awaited_once_with(
+            {
+                "repository": "https://github.com/org/repo",
+                "commitId": "abc123",
+                "scanMode": "full",
+                "branch": "main",
+            }
+        )
+        files_tool.ainvoke.assert_awaited_once_with(
+            {"path": "full/job-1/src/app.py"}
+        )
+        assert result["files"] == [{"path": "src/app.py", "content": "print('hello')"}]
+
 
 class TestMergeFindingsNode:
     """Tests for merge findings node."""

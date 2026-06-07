@@ -14,6 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 _RAG_POLL_INTERVAL_S = 10
 _RAG_MAX_ATTEMPTS = 60
+_SCAN_MODE_COMMIT = "commit"
+_SCAN_MODE_FULL = "full"
 
 
 class AnalyseCodeUseCase:
@@ -44,8 +46,40 @@ class AnalyseCodeUseCase:
         self.rag_index_status = rag_index_status
         self.rag_indexer_trigger = rag_indexer_trigger
 
-    async def _ensure_rag_index(self, repo_url: str, branch: str) -> None:
-        """Ensure the RAG index exists for the branch, triggering full indexing if needed.
+    @staticmethod
+    def _normalize_scan_mode(scan_mode: object) -> str:
+        if scan_mode in (None, ""):
+            return _SCAN_MODE_COMMIT
+        if scan_mode not in {_SCAN_MODE_COMMIT, _SCAN_MODE_FULL}:
+            raise ValueError("scan_mode must be one of: commit, full")
+        return str(scan_mode)
+
+    async def _wait_for_rag_job(self, job_id: str, repo_url: str, label: str) -> None:
+        for attempt in range(1, _RAG_MAX_ATTEMPTS + 1):
+            await asyncio.sleep(_RAG_POLL_INTERVAL_S)
+            status = self.rag_indexer_trigger.get_job_status(job_id)
+            LOGGER.info(
+                "Indexing job %s status: %s (attempt %d/%d)",
+                job_id,
+                status.status,
+                attempt,
+                _RAG_MAX_ATTEMPTS,
+            )
+            if status.is_succeeded:
+                LOGGER.info("RAG indexing completed for %s (%s)", repo_url, label)
+                return
+            if status.is_failed:
+                raise RuntimeError(
+                    f"RAG indexing job {job_id} failed for {repo_url} ({label})"
+                )
+
+        raise TimeoutError(
+            f"RAG indexing timed out for {repo_url} ({label}) "
+            f"after {_RAG_MAX_ATTEMPTS * _RAG_POLL_INTERVAL_S}s"
+        )
+
+    async def _ensure_branch_rag_index(self, repo_url: str, branch: str) -> None:
+        """Ensure the RAG index exists for the branch.
 
         Blocks until the indexing job completes or raises on failure/timeout.
         """
@@ -60,29 +94,35 @@ class AnalyseCodeUseCase:
         )
         job_id = self.rag_indexer_trigger.trigger_full(repo_url, branch)
         LOGGER.info("Full indexing job submitted: %s", job_id)
+        await self._wait_for_rag_job(job_id, repo_url, branch)
 
-        for attempt in range(1, _RAG_MAX_ATTEMPTS + 1):
-            await asyncio.sleep(_RAG_POLL_INTERVAL_S)
-            status = self.rag_indexer_trigger.get_job_status(job_id)
+    async def _ensure_rag_index(
+        self, repo_url: str, branch: str, commit_hash: str, scan_mode: str
+    ) -> None:
+        """Ensure RAG context is available, and fresh for full scans."""
+        await self._ensure_branch_rag_index(repo_url, branch)
+
+        if scan_mode != _SCAN_MODE_FULL:
+            return
+
+        if self.rag_index_status.is_commit_indexed(repo_url, branch, commit_hash):
             LOGGER.info(
-                "Indexing job %s status: %s (attempt %d/%d)",
-                job_id,
-                status.status,
-                attempt,
-                _RAG_MAX_ATTEMPTS,
+                "RAG index already fresh for %s@%s (%s)",
+                repo_url,
+                branch,
+                commit_hash[:7],
             )
-            if status.is_succeeded:
-                LOGGER.info("Full indexing completed for %s@%s", repo_url, branch)
-                return
-            if status.is_failed:
-                raise RuntimeError(
-                    f"RAG indexing job {job_id} failed for {repo_url}@{branch}"
-                )
+            return
 
-        raise TimeoutError(
-            f"RAG indexing timed out for {repo_url}@{branch} "
-            f"after {_RAG_MAX_ATTEMPTS * _RAG_POLL_INTERVAL_S}s"
+        LOGGER.info(
+            "RAG index is stale for full scan %s@%s (%s) — triggering delta indexing",
+            repo_url,
+            branch,
+            commit_hash[:7],
         )
+        job_id = self.rag_indexer_trigger.trigger_delta(repo_url, branch, commit_hash)
+        LOGGER.info("Delta indexing job submitted for full scan freshness: %s", job_id)
+        await self._wait_for_rag_job(job_id, repo_url, f"{branch}@{commit_hash[:7]}")
 
     def _trigger_delta_indexing(
         self, repo_url: str, branch: str, commit_hash: str
@@ -152,10 +192,14 @@ class AnalyseCodeUseCase:
         self.task_repository.update_task(task)
         LOGGER.debug("Marking task %s as in progress", task_id)
 
-        await self._ensure_rag_index(task.repository_url, task.branch)
+        scan_mode = self._normalize_scan_mode(task.args.get("scan_mode"))
+        await self._ensure_rag_index(
+            task.repository_url, task.branch, task.commit_hash, scan_mode
+        )
 
+        analysis_args = {**task.args, "scan_mode": scan_mode}
         content_args = ""
-        for key, value in task.args.items():
+        for key, value in analysis_args.items():
             if key == "repository_url":
                 LOGGER.debug("Skipping repository url: %s", value)
                 continue
@@ -164,7 +208,7 @@ class AnalyseCodeUseCase:
 
         rag_context = (
             f"Note: The codebase for branch `{task.branch}` is indexed as background "
-            "context. The files of the commit to analyze are retrieved via MCP tools."
+            "context. The selected analysis files are retrieved via MCP tools."
         )
 
         message = AgentMessage(
@@ -178,6 +222,14 @@ class AnalyseCodeUseCase:
                 # Files retrieved internally by LangGraph MCP node
                 files_content="",
             ),
+            metadata={
+                "repository_url": task.repository_url,
+                "commit_hash": task.commit_hash,
+                "branch": task.branch,
+                "scan_mode": scan_mode,
+                "scan_ref": task.branch,
+                "extra_args": analysis_args,
+            },
         )
         LOGGER.debug("Sending message to agent: %s", message.content)
         agent_response = await self.agent.invoke(message)
