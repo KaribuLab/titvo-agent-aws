@@ -85,7 +85,11 @@ class FindingsMerger:
         issue_code = self._normalize_code(issue.code)
 
         if existing_code and issue_code:
-            return existing_code == issue_code
+            return (
+                existing_code == issue_code
+                or existing_code in issue_code
+                or issue_code in existing_code
+            )
         if existing_code or issue_code:
             return True
 
@@ -141,6 +145,11 @@ class FindingsMerger:
 
         if issue_has_code and not existing_has_code:
             return issue
+        if existing_has_code and issue_has_code:
+            existing_code = self._normalize_code(existing.code)
+            issue_code = self._normalize_code(issue.code)
+            if len(issue_code) > len(existing_code):
+                return issue
         return existing
 
     @staticmethod

@@ -208,6 +208,46 @@ class TestFindingsMerger:
         assert merged[0].code == issue_with_code.code
         assert merged[0].category == issue_with_code.category
 
+    def test_duplicate_prefers_longer_containing_code_snippet(self):
+        """Subset code snippets should deduplicate and keep more evidence."""
+        merger = FindingsMerger()
+
+        short_issue = ExpertIssue(
+            title="Almacenamiento inseguro de tokens en localStorage",
+            description="Access token is stored in localStorage",
+            severity="HIGH",
+            category="Insecure Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Access token persisted in localStorage",
+            code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
+            recommendation="Use HttpOnly Secure SameSite cookies",
+        )
+        long_issue = ExpertIssue(
+            title="Almacenamiento inseguro de tokens en localStorage (web)",
+            description="Access, refresh and ID tokens are stored in localStorage",
+            severity="HIGH",
+            category="Auth Token Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Sensitive tokens persisted in localStorage",
+            code=(
+                "window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken); "
+                "window.localStorage.setItem(KEYS.REFRESH, tokens.refreshToken); "
+                "window.localStorage.setItem(KEYS.ID, tokens.idToken);"
+            ),
+            recommendation="Use backend-managed secure cookies",
+        )
+
+        merger.add_expert_result(ExpertResult("web_expert", [short_issue]))
+        merger.add_expert_result(ExpertResult("auth_expert", [long_issue]))
+
+        merged = merger.get_merged_issues()
+        assert len(merged) == 1
+        assert merged[0].title == long_issue.title
+        assert merged[0].code == long_issue.code
+        assert merged[0].category == long_issue.category
+
     def test_status_failed_with_critical(self):
         """Status should be FAILED with CRITICAL issues."""
         merger = FindingsMerger()
