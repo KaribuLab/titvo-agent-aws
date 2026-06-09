@@ -1,8 +1,11 @@
 import asyncio
+import json
 import logging
 import os
 from logging.config import dictConfig
 from typing import Any, Optional
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import boto3
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -26,10 +29,10 @@ from code_analysis.infra.adapters.langchain_agent_adapter import (
     AsyncMCPToolsFactory,
     LangchainAgentModelFactory,
 )
-from code_analysis.infra.adapters.langgraph_agent import LangGraphAgent
 from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
     RagRetrievalNode,
 )
+from code_analysis.infra.adapters.langgraph_agent import LangGraphAgent
 from code_analysis.infra.adapters.s3_rag_index_status_adapter import (
     create_s3_rag_index_status_adapter,
 )
@@ -47,6 +50,38 @@ from shared.infra.services.encryption_service import EncryptionService
 dictConfig(config)
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _load_container_metadata() -> dict[str, Any]:
+    """Load ECS container metadata when running under AWS Batch/ECS."""
+    metadata_uri = os.getenv("ECS_CONTAINER_METADATA_URI_V4")
+    if not metadata_uri:
+        return {}
+
+    try:
+        with urlopen(metadata_uri, timeout=2) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, json.JSONDecodeError) as exc:
+        LOGGER.warning("Unable to load ECS container metadata: %s", exc)
+        return {}
+
+
+def log_runtime_identity(task_id: str | None) -> None:
+    """Log enough runtime data to confirm which container image is running."""
+    metadata = _load_container_metadata()
+    LOGGER.info(
+        "Agent runtime identity: task_id=%s batch_job_id=%s "
+        "batch_attempt=%s image=%s image_id=%s docker_id=%s "
+        "git_sha=%s image_digest=%s",
+        task_id,
+        os.getenv("AWS_BATCH_JOB_ID"),
+        os.getenv("AWS_BATCH_JOB_ATTEMPT"),
+        metadata.get("Image"),
+        metadata.get("ImageID"),
+        metadata.get("DockerId"),
+        os.getenv("TITVO_AGENT_GIT_SHA"),
+        os.getenv("TITVO_AGENT_IMAGE_DIGEST"),
+    )
 
 
 def create_boto3_client(service_name: str) -> Any:
@@ -100,6 +135,7 @@ async def create_langgraph_agent(
 
 async def main():
     task_id = os.getenv("TITVO_SCAN_TASK_ID")
+    log_runtime_identity(task_id)
     LOGGER.debug("Starting the application with task id %s", task_id)
     if task_id is None:
         raise ValueError("TITVO_SCAN_TASK_ID is not set")
