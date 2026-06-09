@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
 from code_analysis.domain.services.findings_merger import FindingsMerger
 from code_analysis.infra.adapters.langgraph.state import AgentState
+from code_analysis.prompts import get_findings_consolidation_prompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -112,12 +113,12 @@ class MergeFindingsNode:
         if self._model is None or len(issues) < 2:
             return fallback_issues
 
-        candidates = self._build_consolidation_candidates(issues)
-        if len(candidates) < 2:
+        findings = self._build_findings_payload(issues)
+        if len(findings) < 2:
             return fallback_issues
 
         try:
-            return self._request_consolidated_issues(candidates, fallback_issues)
+            return self._request_consolidated_issues(findings, fallback_issues)
         except Exception as exc:
             LOGGER.warning(
                 "Findings consolidation failed; using deterministic result: %s",
@@ -125,45 +126,27 @@ class MergeFindingsNode:
             )
             return fallback_issues
 
-    def _build_consolidation_candidates(
+    def _build_findings_payload(
         self,
         issues: list[ExpertIssue],
     ) -> list[dict[str, Any]]:
-        """Build compact candidates for low-token findings consolidation."""
-        candidates = []
+        """Serialize all expert findings for model-led consolidation."""
+        findings = []
         for idx, issue in enumerate(issues):
-            candidates.append(
-                {
-                    "id": idx,
-                    "title": issue.title[:120],
-                    "description": self._compact_text(issue.description, 260),
-                    "path": issue.path,
-                    "line": issue.line,
-                    "severity": issue.severity,
-                    "category": issue.category[:80],
-                    "summary": issue.summary[:160],
-                    "code": self._compact_text(issue.code, 220),
-                    "recommendation": self._compact_text(issue.recommendation, 260),
-                }
-            )
-        return candidates
+            finding = issue.to_dict()
+            finding["id"] = idx
+            findings.append(finding)
+        return findings
 
     def _request_consolidated_issues(
         self,
-        candidates: list[dict[str, Any]],
+        findings: list[dict[str, Any]],
         fallback_issues: list[ExpertIssue],
     ) -> list[ExpertIssue]:
-        prompt = (
-            "Consolidate security findings into a final report list. "
-            "Return ONLY JSON with this shape: "
-            '{"issues":[{"title":"","description":"","severity":"HIGH",'
-            '"category":"","path":"","line":1,"summary":"","code":"",'
-            '"recommendation":""}]}. '
-            "Merge findings that describe the same root vulnerability, combining "
-            "useful context and remediation. Keep separate risks separate. "
-            "Use only paths, lines, and code snippets present in candidates. "
-            "Use the highest severity among merged findings. Candidates:\n"
-            f"{json.dumps(candidates, ensure_ascii=False, separators=(',', ':'))}"
+        findings_json = json.dumps(findings, ensure_ascii=False, separators=(",", ":"))
+        prompt = get_findings_consolidation_prompt().replace(
+            "{{ findings_json }}",
+            findings_json,
         )
         response = self._model.invoke([HumanMessage(content=prompt)])
         content = getattr(response, "content", response)
@@ -174,7 +157,7 @@ class MergeFindingsNode:
         if not consolidated:
             return fallback_issues
         issues = [self._issue_from_consolidated_dict(issue) for issue in consolidated]
-        self._validate_consolidated_evidence(issues, candidates)
+        self._validate_consolidated_evidence(issues, findings)
         return issues
 
     @staticmethod
@@ -210,35 +193,33 @@ class MergeFindingsNode:
     def _validate_consolidated_evidence(
         self,
         issues: list[ExpertIssue],
-        candidates: list[dict[str, Any]],
+        findings: list[dict[str, Any]],
     ) -> None:
-        locations = {(candidate["path"], candidate["line"]) for candidate in candidates}
-        codes_by_location: dict[tuple[str, int], set[str]] = {}
-        for candidate in candidates:
-            location = (candidate["path"], candidate["line"])
-            code = self._normalize_code(str(candidate.get("code", "")))
+        lines_by_path: dict[str, set[int]] = {}
+        codes_by_path: dict[str, set[str]] = {}
+        for finding in findings:
+            path = str(finding.get("path", ""))
+            line = int(finding.get("line", 0))
+            lines_by_path.setdefault(path, set()).add(line)
+            code = self._normalize_code(str(finding.get("code", "")))
             if code:
-                codes_by_location.setdefault(location, set()).add(code)
+                codes_by_path.setdefault(path, set()).add(code)
 
         for issue in issues:
-            location = (issue.path, issue.line)
-            if location not in locations:
+            if issue.path not in lines_by_path:
+                raise ValueError(f"Consolidated issue invented path: {issue.path}")
+            if issue.line not in lines_by_path[issue.path]:
                 raise ValueError(
-                    f"Consolidated issue invented location: {issue.path}:{issue.line}"
+                    f"Consolidated issue invented line: {issue.path}:{issue.line}"
                 )
             code = self._normalize_code(issue.code)
-            allowed_codes = codes_by_location.get(location, set())
+            allowed_codes = codes_by_path.get(issue.path, set())
             if code and code not in allowed_codes:
                 raise ValueError("Consolidated issue invented code evidence")
 
     @staticmethod
     def _normalize_code(code: str) -> str:
         return " ".join((code or "").split())
-
-    @staticmethod
-    def _compact_text(text: str, limit: int) -> str:
-        normalized = " ".join((text or "").split())
-        return normalized[:limit]
 
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, Any]:

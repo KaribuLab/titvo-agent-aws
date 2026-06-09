@@ -42,6 +42,13 @@ class TestPromptRegistry:
         assert isinstance(prompt, str)
         assert "orchestrator" in prompt.lower() or "MCP" in prompt
 
+    def test_findings_consolidation_prompt_loads(self):
+        """Findings consolidation prompt should load successfully."""
+        prompt = prompts.get_findings_consolidation_prompt()
+        assert isinstance(prompt, str)
+        assert "{{ findings_json }}" in prompt
+        assert "Consolidación" in prompt
+
     def test_all_expert_prompts_load(self):
         """All expert prompts should load successfully."""
         expert_names = prompts.list_experts()

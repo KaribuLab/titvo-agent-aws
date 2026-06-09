@@ -35,6 +35,14 @@ class PromptRegistry:
         return resources.read_text("code_analysis.prompts", "orchestrator_prompt.md")
 
     @cache
+    def get_findings_consolidation_prompt(self) -> str:
+        """Load the findings consolidation prompt."""
+        return resources.read_text(
+            "code_analysis.prompts",
+            "findings_consolidation.md",
+        )
+
+    @cache
     def get_expert_prompt(self, expert_name: str) -> str:
         """Load an expert-specific prompt.
 
@@ -104,6 +112,11 @@ def get_content_template() -> str:
 def get_orchestrator_prompt() -> str:
     """Load the orchestrator prompt."""
     return get_registry().get_orchestrator_prompt()
+
+
+def get_findings_consolidation_prompt() -> str:
+    """Load the findings consolidation prompt."""
+    return get_registry().get_findings_consolidation_prompt()
 
 
 def get_expert_prompt(expert_name: str) -> str:

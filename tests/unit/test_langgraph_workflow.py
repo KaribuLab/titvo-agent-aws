@@ -360,7 +360,9 @@ class TestMergeFindingsNode:
         assert len(issues) == 1
         assert issues[0]["title"] == "URL externa sin validación"
         prompt = model.invoke.call_args.args[0][0].content
-        assert "full file contents" not in prompt
+        assert "# Consolidación de Hallazgos de Seguridad" in prompt
+        assert "long description should not be sent" in prompt
+        assert "long recommendation should not be sent" in prompt
         assert "duplicate_groups" not in prompt
         assert '"issues"' in prompt
 
@@ -504,7 +506,7 @@ class TestMergeFindingsNode:
             severity="HIGH",
             category="OAuth Token Storage",
             path="services/auth/tokenStorage.ts",
-            line=16,
+            line=17,
             summary="Uso de localStorage para tokens sensibles en web.",
             code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
             recommendation="Reducir vida útil y rotar refresh tokens si no hay BFF.",
