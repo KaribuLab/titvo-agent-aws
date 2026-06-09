@@ -17,7 +17,7 @@ from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.prompts import get_findings_consolidation_prompt
 
 LOGGER = logging.getLogger(__name__)
-CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v2"
+CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v3"
 
 
 class MergeFindingsNode:
@@ -182,7 +182,39 @@ class MergeFindingsNode:
             prompt_hash,
             len(str(content)),
         )
-        data = self._parse_json_object(str(content))
+        content_text = str(content)
+        try:
+            data = self._parse_json_object(content_text)
+        except Exception as parse_exc:
+            LOGGER.warning(
+                "Findings consolidation parse failed; attempting repair: "
+                "trace_version=%s prompt_hash=%s error=%s response_length=%d",
+                CONSOLIDATION_TRACE_VERSION,
+                prompt_hash,
+                parse_exc,
+                len(content_text),
+            )
+            try:
+                repaired_content = self._repair_json_response(content_text, prompt_hash)
+                data = self._parse_json_object(repaired_content)
+            except Exception as repair_exc:
+                LOGGER.warning(
+                    "Findings consolidation repair failed: trace_version=%s "
+                    "prompt_hash=%s repair_attempted=true repair_success=false "
+                    "error=%s",
+                    CONSOLIDATION_TRACE_VERSION,
+                    prompt_hash,
+                    repair_exc,
+                )
+                raise
+            LOGGER.info(
+                "Findings consolidation repair succeeded: trace_version=%s "
+                "prompt_hash=%s repair_attempted=true repair_success=true "
+                "repaired_response_length=%d",
+                CONSOLIDATION_TRACE_VERSION,
+                prompt_hash,
+                len(repaired_content),
+            )
         consolidated = data.get("issues", [])
         if not isinstance(consolidated, list):
             raise ValueError("Consolidation response issues must be a list")
@@ -304,12 +336,57 @@ class MergeFindingsNode:
             for finding in findings
         ]
 
+    def _repair_json_response(self, content: str, prompt_hash: str) -> str:
+        repair_prompt = (
+            "Convierte la siguiente respuesta a JSON estricto válido. "
+            "No cambies el contenido semántico. No agregues explicaciones. "
+            "No uses Markdown. Usa comillas dobles JSON. "
+            "La respuesta debe empezar con { y terminar con }.\n\n"
+            f"Respuesta a reparar:\n{content}"
+        )
+        response = self._model.invoke([HumanMessage(content=repair_prompt)])
+        repaired = str(getattr(response, "content", response))
+        LOGGER.info(
+            "Findings consolidation repair response received: trace_version=%s "
+            "prompt_hash=%s repair_attempted=true repaired_response_length=%d",
+            CONSOLIDATION_TRACE_VERSION,
+            prompt_hash,
+            len(repaired),
+        )
+        return repaired
+
+    def _parse_json_object(self, content: str) -> dict[str, Any]:
+        errors = []
+        for candidate in self._json_candidates(content):
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                errors.append(str(exc))
+                continue
+            if not isinstance(data, dict):
+                raise ValueError("Consolidation response must be a JSON object")
+            return data
+        if errors:
+            raise ValueError(errors[-1])
+        raise ValueError("No JSON object found in consolidation response")
+
     @staticmethod
-    def _parse_json_object(content: str) -> dict[str, Any]:
+    def _json_candidates(content: str) -> list[str]:
+        candidates = [content.strip()]
+        fenced_blocks = re.findall(
+            r"```(?:json)?\s*(.*?)```",
+            content,
+            re.DOTALL | re.IGNORECASE,
+        )
+        candidates.extend(block.strip() for block in fenced_blocks)
         match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            raise ValueError("No JSON object found in semantic dedup response")
-        data = json.loads(match.group(0))
-        if not isinstance(data, dict):
-            raise ValueError("Semantic dedup response must be a JSON object")
-        return data
+        if match:
+            candidates.append(match.group(0).strip())
+
+        unique_candidates = []
+        seen = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                unique_candidates.append(candidate)
+        return unique_candidates

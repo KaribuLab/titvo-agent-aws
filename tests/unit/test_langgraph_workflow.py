@@ -365,12 +365,134 @@ class TestMergeFindingsNode:
         assert "duplicate_groups" not in prompt
         assert '"issues"' in prompt
 
-    def test_findings_consolidation_invalid_json_falls_back(self):
-        """Invalid model responses should keep deterministic results."""
+    def test_findings_consolidation_parses_fenced_json(self):
+        """Markdown-fenced JSON should be accepted without repair."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         model = MagicMock()
-        model.invoke.return_value = MagicMock(content="not json")
+        model.invoke.return_value = MagicMock(
+            content=(
+                '```json\n{"issues":[{"title":"Finding A",'
+                '"description":"A","severity":"MEDIUM","category":"A",'
+                '"path":"same/file.ts","line":10,"summary":"A",'
+                '"code":"foo();","recommendation":"Fix A"}]}\n```'
+            )
+        )
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="MEDIUM",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding B",
+            description="B",
+            severity="MEDIUM",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="bar();",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        assert len(result["final_output"]["issues"]) == 1
+        assert result["final_output"]["issues"][0]["title"] == "Finding A"
+        assert model.invoke.call_count == 1
+
+    def test_findings_consolidation_repairs_python_style_dict(self):
+        """Invalid Python-style dict responses should be repaired by the model."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        repaired_json = (
+            '{"issues":[{"title":"Finding A",'
+            '"description":"A","severity":"MEDIUM","category":"A",'
+            '"path":"same/file.ts","line":10,"summary":"A",'
+            '"code":"foo();","recommendation":"Fix A"}]}'
+        )
+        model = MagicMock()
+        model.invoke.side_effect = [
+            MagicMock(
+                content=(
+                    "{'issues':[{'title':'Finding A','description':'A',"
+                    "'severity':'MEDIUM','category':'A','path':'same/file.ts',"
+                    "'line':10,'summary':'A','code':'foo();',"
+                    "'recommendation':'Fix A'}]}"
+                )
+            ),
+            MagicMock(content=repaired_json),
+        ]
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="MEDIUM",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding B",
+            description="B",
+            severity="MEDIUM",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="bar();",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["title"] == "Finding A"
+        assert model.invoke.call_count == 2
+        repair_prompt = model.invoke.call_args_list[1].args[0][0].content
+        assert "JSON estricto" in repair_prompt
+        assert "No cambies el contenido semántico" in repair_prompt
+
+    def test_findings_consolidation_invalid_json_falls_back(self):
+        """Invalid model and repair responses should keep original findings."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.side_effect = [
+            MagicMock(content="not json"),
+            MagicMock(content="still not json"),
+        ]
         node = MergeFindingsNode(model)
 
         issue1 = ExpertIssue(
@@ -408,6 +530,7 @@ class TestMergeFindingsNode:
         result = node(state)
 
         assert len(result["final_output"]["issues"]) == 2
+        assert model.invoke.call_count == 2
 
     def test_findings_consolidation_keeps_model_severity(self):
         """Consolidation should use the model's final issue severity."""

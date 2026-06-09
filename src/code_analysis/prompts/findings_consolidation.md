@@ -2,7 +2,7 @@
 
 Consolida los hallazgos de seguridad producidos por varios expertos en una lista final para el reporte.
 
-Devuelve solamente JSON válido con esta forma exacta:
+Devuelve solamente JSON válido estricto RFC 8259 con esta forma exacta:
 
 ```json
 {
@@ -35,6 +35,9 @@ Reglas:
 - Si fusionas hallazgos del mismo archivo con líneas cercanas, elige una línea representativa que exista en los hallazgos de entrada para ese archivo.
 - Redacta `title`, `description`, `summary` y `recommendation` en español neutro.
 - Mantén recomendaciones accionables y específicas.
+- La respuesta debe empezar con `{` y terminar con `}`.
+- Usa siempre comillas dobles para nombres de propiedades y strings.
+- No uses diccionarios Python, comillas simples, comentarios, trailing commas, Markdown ni fences JSON.
 - No incluyas campos adicionales ni explicaciones fuera del JSON.
 
 Hallazgos de entrada:
