@@ -158,7 +158,7 @@ class MergeFindingsNode:
             return fallback_issues
         issues = [self._issue_from_consolidated_dict(issue) for issue in consolidated]
         self._validate_consolidated_evidence(issues, findings)
-        return issues
+        return self._cleanup_exact_duplicates(issues)
 
     @staticmethod
     def _issue_from_consolidated_dict(data: dict[str, Any]) -> ExpertIssue:
@@ -216,6 +216,21 @@ class MergeFindingsNode:
             allowed_codes = codes_by_path.get(issue.path, set())
             if code and code not in allowed_codes:
                 raise ValueError("Consolidated issue invented code evidence")
+
+    def _cleanup_exact_duplicates(self, issues: list[ExpertIssue]) -> list[ExpertIssue]:
+        merger = FindingsMerger()
+        merger.add_expert_result(
+            ExpertResult(expert_name="consolidation_cleanup", issues=issues)
+        )
+        cleaned = merger.get_merged_issues()
+        if len(cleaned) < len(issues):
+            LOGGER.warning(
+                "Consolidation model returned duplicate evidence; "
+                "applied final cleanup: before=%d after=%d",
+                len(issues),
+                len(cleaned),
+            )
+        return cleaned
 
     @staticmethod
     def _normalize_code(code: str) -> str:

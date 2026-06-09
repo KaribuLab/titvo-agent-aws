@@ -25,8 +25,10 @@ Devuelve solamente JSON válido con esta forma exacta:
 Reglas:
 
 - Decide tú qué hallazgos describen la misma vulnerabilidad raíz.
-- Fusiona hallazgos equivalentes en un único issue final.
-- Conserva separados los riesgos distintos, aunque estén en el mismo archivo.
+- Consolida de forma agresiva por problema raíz o control de seguridad afectado.
+- Fusiona en un único issue final los hallazgos que apunten al mismo problema principal, aunque tengan títulos, líneas, expertos o matices distintos.
+- Si varios hallazgos hablan del mismo secreto, token, credencial, access key, JWT, storage inseguro, redirect inseguro, imagen mutable o control de seguridad equivalente, deja solo un issue y mezcla lo útil de cada hallazgo.
+- Mantén separados solo los problemas raíz claramente distintos que requieran acciones de remediación diferentes.
 - Combina contexto útil de expertos diferentes cuando mejora el feedback al usuario.
 - Usa la severidad más alta entre hallazgos fusionados.
 - No inventes archivos ni fragmentos de código: usa `path` y `code` presentes en los hallazgos de entrada.

@@ -531,6 +531,74 @@ class TestMergeFindingsNode:
         assert "HttpOnly" in issues[0]["recommendation"]
         assert "CSP" in issues[0]["recommendation"]
 
+    def test_findings_consolidation_cleans_exact_duplicate_model_output(self):
+        """Exact duplicates returned by the model should not reach the report."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        duplicate_code = "window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);"
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(
+            content=(
+                '{"issues":['
+                '{"title":"Almacenamiento de tokens en localStorage",'
+                '"description":"Tokens accesibles desde JavaScript.",'
+                '"severity":"HIGH","category":"Token Storage",'
+                '"path":"services/auth/tokenStorage.ts","line":16,'
+                '"summary":"Tokens en localStorage.",'
+                f'"code":"{duplicate_code}",'
+                '"recommendation":"Usar cookies HttpOnly."},'
+                '{"title":"Almacenamiento inseguro de tokens",'
+                '"description":"Tokens expuestos ante XSS.",'
+                '"severity":"HIGH","category":"OAuth Token Storage",'
+                '"path":"services/auth/tokenStorage.ts","line":16,'
+                '"summary":"Tokens sensibles persistidos en web.",'
+                f'"code":"{duplicate_code}",'
+                '"recommendation":"Aplicar CSP y rotación."}'
+                "]}"
+            )
+        )
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Almacenamiento de tokens en localStorage",
+            description="Tokens accesibles desde JavaScript.",
+            severity="HIGH",
+            category="Token Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens en localStorage.",
+            code=duplicate_code,
+            recommendation="Usar cookies HttpOnly.",
+        )
+        issue2 = ExpertIssue(
+            title="Almacenamiento inseguro de tokens",
+            description="Tokens expuestos ante XSS.",
+            severity="HIGH",
+            category="OAuth Token Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens sensibles persistidos en web.",
+            code=duplicate_code,
+            recommendation="Aplicar CSP y rotación.",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["path"] == "services/auth/tokenStorage.ts"
+        assert issues[0]["line"] == 16
+        assert issues[0]["code"] == duplicate_code
+
 
 class TestAgentState:
     """Tests for AgentState TypedDict."""

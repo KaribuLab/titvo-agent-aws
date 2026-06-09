@@ -48,6 +48,7 @@ class TestPromptRegistry:
         assert isinstance(prompt, str)
         assert "{{ findings_json }}" in prompt
         assert "Consolidación" in prompt
+        assert "problema raíz" in prompt
 
     def test_all_expert_prompts_load(self):
         """All expert prompts should load successfully."""
