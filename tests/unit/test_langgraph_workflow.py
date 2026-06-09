@@ -304,13 +304,21 @@ class TestMergeFindingsNode:
         assert issues[0]["title"] == issue_with_code.title
         assert issues[0]["code"] == issue_with_code.code
 
-    def test_semantic_deduplication_groups_duplicate_findings(self):
-        """Semantic pass should group duplicate findings using compact IDs."""
+    def test_findings_consolidation_groups_duplicate_findings(self):
+        """Consolidation should return final merged issues from the model."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         model = MagicMock()
         model.invoke.return_value = MagicMock(
-            content='{"duplicate_groups":[[0,1]]}'
+            content=(
+                '{"issues":[{"title":"URL externa sin validación",'
+                '"description":"Se navega a una URL externa sin allowlist.",'
+                '"severity":"MEDIUM","category":"WebView",'
+                '"path":"utils/resolveWebView.ts","line":40,'
+                '"summary":"Falta validación de URL antes de navegar",'
+                '"code":"router.push({ pathname: \\"/webview\\", params: { url } });",'
+                '"recommendation":"Validar la URL contra una allowlist."}]}'
+            )
         )
         node = MergeFindingsNode(model)
 
@@ -350,13 +358,13 @@ class TestMergeFindingsNode:
 
         issues = result["final_output"]["issues"]
         assert len(issues) == 1
-        assert issues[0]["title"] == issue2.title
+        assert issues[0]["title"] == "URL externa sin validación"
         prompt = model.invoke.call_args.args[0][0].content
-        assert "long description" not in prompt
-        assert "long recommendation" not in prompt
-        assert "duplicate_groups" in prompt
+        assert "full file contents" not in prompt
+        assert "duplicate_groups" not in prompt
+        assert '"issues"' in prompt
 
-    def test_semantic_deduplication_invalid_json_falls_back(self):
+    def test_findings_consolidation_invalid_json_falls_back(self):
         """Invalid model responses should keep deterministic results."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
@@ -400,12 +408,21 @@ class TestMergeFindingsNode:
 
         assert len(result["final_output"]["issues"]) == 2
 
-    def test_semantic_deduplication_keeps_highest_severity(self):
-        """Semantic merge should keep the highest severity from duplicates."""
+    def test_findings_consolidation_keeps_model_severity(self):
+        """Consolidation should use the model's final issue severity."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         model = MagicMock()
-        model.invoke.return_value = MagicMock(content='{"duplicate_groups":[[0,1]]}')
+        model.invoke.return_value = MagicMock(
+            content=(
+                '{"issues":[{"title":"Finding consolidado",'
+                '"description":"Riesgo consolidado.","severity":"HIGH",'
+                '"category":"Auth","path":"same/file.ts","line":10,'
+                '"summary":"Token expuesto.",'
+                '"code":"const token = localStorage.getItem(\'token\'); send(token);",'
+                '"recommendation":"Evitar persistir tokens en localStorage."}]}'
+            )
+        )
         node = MergeFindingsNode(model)
 
         low_with_more_code = ExpertIssue(
@@ -444,8 +461,73 @@ class TestMergeFindingsNode:
 
         issues = result["final_output"]["issues"]
         assert len(issues) == 1
-        assert issues[0]["title"] == low_with_more_code.title
+        assert issues[0]["title"] == "Finding consolidado"
         assert issues[0]["severity"] == "HIGH"
+
+    def test_findings_consolidation_combines_local_storage_feedback(self):
+        """Equivalent localStorage token findings should become one enriched issue."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(
+            content=(
+                '{"issues":[{"title":"Tokens OAuth en localStorage (web)",'
+                '"description":"Los expertos web y mobile detectaron que los '
+                'tokens OAuth se persisten en localStorage, lo que aumenta el '
+                'impacto de XSS y permite secuestro de sesión.",'
+                '"severity":"HIGH","category":"Insecure Token Storage",'
+                '"path":"services/auth/tokenStorage.ts","line":16,'
+                '"summary":"Tokens sensibles persistidos en localStorage en web.",'
+                '"code":"window.localStorage.setItem(KEYS.ACCESS, '
+                'tokens.accessToken);",'
+                '"recommendation":"Usar cookies HttpOnly, Secure y SameSite o '
+                'sesiones backend; si se mantiene SPA, reducir vida útil y '
+                'reforzar CSP."}]}'
+            )
+        )
+        node = MergeFindingsNode(model)
+
+        web_issue = ExpertIssue(
+            title="Almacenamiento de tokens de autenticación en localStorage (web)",
+            description="Tokens accesibles desde JavaScript ante XSS.",
+            severity="HIGH",
+            category="Web Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens sensibles persistidos en localStorage en entorno web",
+            code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
+            recommendation="Preferir cookies seguras HttpOnly, Secure y SameSite.",
+        )
+        mobile_issue = ExpertIssue(
+            title="Almacenamiento inseguro de tokens OAuth en localStorage (web)",
+            description="Un XSS podría extraer access, refresh e id tokens.",
+            severity="HIGH",
+            category="OAuth Token Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Uso de localStorage para tokens sensibles en web.",
+            code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
+            recommendation="Reducir vida útil y rotar refresh tokens si no hay BFF.",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [web_issue, mobile_issue],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["path"] == "services/auth/tokenStorage.ts"
+        assert issues[0]["line"] == 16
+        assert issues[0]["severity"] == "HIGH"
+        assert "HttpOnly" in issues[0]["recommendation"]
+        assert "CSP" in issues[0]["recommendation"]
 
 
 class TestAgentState:
