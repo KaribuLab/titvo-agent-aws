@@ -1,6 +1,6 @@
 """Merge Findings Node for LangGraph workflow.
 
-Final node that deduplicates and determines final status.
+Final node that asks the consolidation model for final issues and status.
 """
 
 import json
@@ -11,8 +11,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
-from code_analysis.domain.services.findings_merger import FindingsMerger
+from code_analysis.domain.entities.expert_result import ExpertIssue
 from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.prompts import get_findings_consolidation_prompt
 
@@ -50,11 +49,7 @@ class MergeFindingsNode:
                 for error in expert_errors:
                     LOGGER.warning("Expert error: %s", error)
 
-            # Create deterministic fallback first; model consolidation is best-effort.
-            merger = FindingsMerger()
-            merger.add_expert_result(ExpertResult(expert_name="merged", issues=issues))
-            fallback_issues = merger.get_merged_issues()
-            unique_issues = self._consolidate_findings(issues, fallback_issues)
+            unique_issues = self._consolidate_findings(issues)
 
             LOGGER.info("After consolidation: %d unique issues", len(unique_issues))
 
@@ -107,24 +102,23 @@ class MergeFindingsNode:
     def _consolidate_findings(
         self,
         issues: list[ExpertIssue],
-        fallback_issues: list[ExpertIssue],
     ) -> list[ExpertIssue]:
         """Use the model to produce a final consolidated findings list."""
         if self._model is None or len(issues) < 2:
-            return fallback_issues
+            return issues
 
         findings = self._build_findings_payload(issues)
         if len(findings) < 2:
-            return fallback_issues
+            return issues
 
         try:
-            return self._request_consolidated_issues(findings, fallback_issues)
+            return self._request_consolidated_issues(findings, issues)
         except Exception as exc:
             LOGGER.warning(
-                "Findings consolidation failed; using deterministic result: %s",
+                "Findings consolidation failed; using original findings: %s",
                 exc,
             )
-            return fallback_issues
+            return issues
 
     def _build_findings_payload(
         self,
@@ -141,7 +135,7 @@ class MergeFindingsNode:
     def _request_consolidated_issues(
         self,
         findings: list[dict[str, Any]],
-        fallback_issues: list[ExpertIssue],
+        original_issues: list[ExpertIssue],
     ) -> list[ExpertIssue]:
         findings_json = json.dumps(findings, ensure_ascii=False, separators=(",", ":"))
         prompt = get_findings_consolidation_prompt().replace(
@@ -155,10 +149,10 @@ class MergeFindingsNode:
         if not isinstance(consolidated, list):
             raise ValueError("Consolidation response issues must be a list")
         if not consolidated:
-            return fallback_issues
+            return original_issues
         issues = [self._issue_from_consolidated_dict(issue) for issue in consolidated]
         self._validate_consolidated_evidence(issues, findings)
-        return self._cleanup_exact_duplicates(issues)
+        return issues
 
     @staticmethod
     def _issue_from_consolidated_dict(data: dict[str, Any]) -> ExpertIssue:
@@ -216,21 +210,6 @@ class MergeFindingsNode:
             allowed_codes = codes_by_path.get(issue.path, set())
             if code and code not in allowed_codes:
                 raise ValueError("Consolidated issue invented code evidence")
-
-    def _cleanup_exact_duplicates(self, issues: list[ExpertIssue]) -> list[ExpertIssue]:
-        merger = FindingsMerger()
-        merger.add_expert_result(
-            ExpertResult(expert_name="consolidation_cleanup", issues=issues)
-        )
-        cleaned = merger.get_merged_issues()
-        if len(cleaned) < len(issues):
-            LOGGER.warning(
-                "Consolidation model returned duplicate evidence; "
-                "applied final cleanup: before=%d after=%d",
-                len(issues),
-                len(cleaned),
-            )
-        return cleaned
 
     @staticmethod
     def _normalize_code(code: str) -> str:

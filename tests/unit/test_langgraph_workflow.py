@@ -218,8 +218,8 @@ class TestMergeFindingsNode:
         result = node(state)
         assert result["status"] == "WARNING"
 
-    def test_deduplication_in_merge(self, node):
-        """Duplicate issues should be deduplicated."""
+    def test_without_model_preserves_duplicate_findings(self, node):
+        """Without consolidation model, duplicate-looking issues are preserved."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         # Same issue twice
@@ -256,12 +256,11 @@ class TestMergeFindingsNode:
         }
         result = node(state)
 
-        # Should be deduplicated to 1 issue
         final_output = result.get("final_output", {})
-        assert len(final_output.get("issues", [])) == 1
+        assert len(final_output.get("issues", [])) == 2
 
-    def test_deduplication_preserves_code_bearing_issue(self, node):
-        """Duplicate merge should prefer the finding that has code."""
+    def test_without_model_preserves_all_findings(self, node):
+        """Fallback should not choose between duplicate-looking issues."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         issue_without_code = ExpertIssue(
@@ -300,9 +299,9 @@ class TestMergeFindingsNode:
 
         final_output = result.get("final_output", {})
         issues = final_output.get("issues", [])
-        assert len(issues) == 1
-        assert issues[0]["title"] == issue_with_code.title
-        assert issues[0]["code"] == issue_with_code.code
+        assert len(issues) == 2
+        assert issues[0]["title"] == issue_without_code.title
+        assert issues[1]["title"] == issue_with_code.title
 
     def test_findings_consolidation_groups_duplicate_findings(self):
         """Consolidation should return final merged issues from the model."""
@@ -531,8 +530,8 @@ class TestMergeFindingsNode:
         assert "HttpOnly" in issues[0]["recommendation"]
         assert "CSP" in issues[0]["recommendation"]
 
-    def test_findings_consolidation_cleans_exact_duplicate_model_output(self):
-        """Exact duplicates returned by the model should not reach the report."""
+    def test_findings_consolidation_uses_valid_model_output_as_is(self):
+        """Valid model output should not be changed by deterministic cleanup."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         duplicate_code = "window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);"
@@ -594,7 +593,7 @@ class TestMergeFindingsNode:
         result = node(state)
 
         issues = result["final_output"]["issues"]
-        assert len(issues) == 1
+        assert len(issues) == 2
         assert issues[0]["path"] == "services/auth/tokenStorage.ts"
         assert issues[0]["line"] == 16
         assert issues[0]["code"] == duplicate_code
