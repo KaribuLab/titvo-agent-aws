@@ -6,6 +6,7 @@ Final node that asks the consolidation model for final issues and status.
 import json
 import logging
 import re
+from hashlib import sha256
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -16,6 +17,7 @@ from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.prompts import get_findings_consolidation_prompt
 
 LOGGER = logging.getLogger(__name__)
+CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v2"
 
 
 class MergeFindingsNode:
@@ -105,18 +107,37 @@ class MergeFindingsNode:
     ) -> list[ExpertIssue]:
         """Use the model to produce a final consolidated findings list."""
         if self._model is None or len(issues) < 2:
+            LOGGER.info(
+                "Findings consolidation skipped: trace_version=%s reason=%s "
+                "original_count=%d original_findings=%s",
+                CONSOLIDATION_TRACE_VERSION,
+                "missing_model" if self._model is None else "not_enough_issues",
+                len(issues),
+                self._summarize_issues(issues),
+            )
             return issues
 
         findings = self._build_findings_payload(issues)
         if len(findings) < 2:
+            LOGGER.info(
+                "Findings consolidation skipped: trace_version=%s "
+                "reason=not_enough_findings original_count=%d findings=%s",
+                CONSOLIDATION_TRACE_VERSION,
+                len(issues),
+                self._summarize_findings(findings),
+            )
             return issues
 
         try:
             return self._request_consolidated_issues(findings, issues)
         except Exception as exc:
             LOGGER.warning(
-                "Findings consolidation failed; using original findings: %s",
+                "Findings consolidation failed; using original findings: "
+                "trace_version=%s error=%s original_count=%d original_findings=%s",
+                CONSOLIDATION_TRACE_VERSION,
                 exc,
+                len(issues),
+                self._summarize_issues(issues),
             )
             return issues
 
@@ -138,20 +159,53 @@ class MergeFindingsNode:
         original_issues: list[ExpertIssue],
     ) -> list[ExpertIssue]:
         findings_json = json.dumps(findings, ensure_ascii=False, separators=(",", ":"))
-        prompt = get_findings_consolidation_prompt().replace(
+        prompt_template = get_findings_consolidation_prompt()
+        prompt_hash = self._hash_text(prompt_template)
+        prompt = prompt_template.replace(
             "{{ findings_json }}",
             findings_json,
         )
+        LOGGER.info(
+            "Findings consolidation request: trace_version=%s prompt_hash=%s "
+            "findings_count=%d findings=%s",
+            CONSOLIDATION_TRACE_VERSION,
+            prompt_hash,
+            len(findings),
+            self._summarize_findings(findings),
+        )
         response = self._model.invoke([HumanMessage(content=prompt)])
         content = getattr(response, "content", response)
+        LOGGER.info(
+            "Findings consolidation response received: trace_version=%s "
+            "prompt_hash=%s response_length=%d",
+            CONSOLIDATION_TRACE_VERSION,
+            prompt_hash,
+            len(str(content)),
+        )
         data = self._parse_json_object(str(content))
         consolidated = data.get("issues", [])
         if not isinstance(consolidated, list):
             raise ValueError("Consolidation response issues must be a list")
         if not consolidated:
+            LOGGER.warning(
+                "Findings consolidation returned no issues; using original findings: "
+                "trace_version=%s prompt_hash=%s original_count=%d",
+                CONSOLIDATION_TRACE_VERSION,
+                prompt_hash,
+                len(original_issues),
+            )
             return original_issues
         issues = [self._issue_from_consolidated_dict(issue) for issue in consolidated]
         self._validate_consolidated_evidence(issues, findings)
+        LOGGER.info(
+            "Findings consolidation accepted: trace_version=%s prompt_hash=%s "
+            "input_count=%d output_count=%d output_findings=%s",
+            CONSOLIDATION_TRACE_VERSION,
+            prompt_hash,
+            len(findings),
+            len(issues),
+            self._summarize_issues(issues),
+        )
         return issues
 
     @staticmethod
@@ -214,6 +268,41 @@ class MergeFindingsNode:
     @staticmethod
     def _normalize_code(code: str) -> str:
         return " ".join((code or "").split())
+
+    @staticmethod
+    def _hash_text(text: str) -> str:
+        return sha256(text.encode("utf-8")).hexdigest()[:12]
+
+    def _summarize_issues(self, issues: list[ExpertIssue]) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": idx,
+                "title": issue.title[:80],
+                "severity": issue.severity,
+                "path": issue.path,
+                "line": issue.line,
+                "code_hash": self._hash_text(self._normalize_code(issue.code)),
+            }
+            for idx, issue in enumerate(issues)
+        ]
+
+    def _summarize_findings(
+        self,
+        findings: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": finding.get("id"),
+                "title": str(finding.get("title", ""))[:80],
+                "severity": finding.get("severity"),
+                "path": finding.get("path"),
+                "line": finding.get("line"),
+                "code_hash": self._hash_text(
+                    self._normalize_code(str(finding.get("code", "")))
+                ),
+            }
+            for finding in findings
+        ]
 
     @staticmethod
     def _parse_json_object(content: str) -> dict[str, Any]:
