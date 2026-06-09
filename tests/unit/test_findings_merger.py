@@ -138,8 +138,8 @@ class TestFindingsMerger:
         merged = merger.get_merged_issues()
         assert len(merged) == 2  # Not deduplicated
 
-    def test_different_categories_not_deduplicated(self):
-        """Issues with different categories should not be deduplicated."""
+    def test_same_code_evidence_deduplicated_across_categories(self):
+        """Same code evidence should deduplicate across categories."""
         merger = FindingsMerger()
 
         issue1 = ExpertIssue(
@@ -169,7 +169,44 @@ class TestFindingsMerger:
         merger.add_expert_result(ExpertResult("owasp_web", [issue2]))
 
         merged = merger.get_merged_issues()
-        assert len(merged) == 2  # Kept as separate issues
+        assert len(merged) == 1
+        assert merged[0].title == "Path Traversal"
+
+    def test_duplicate_prefers_issue_with_code(self):
+        """When only one duplicate has code, the code-bearing issue wins."""
+        merger = FindingsMerger()
+
+        issue_without_code = ExpertIssue(
+            title="Token storage risk",
+            description="Tokens are persisted in browser storage",
+            severity="HIGH",
+            category="Auth Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens in localStorage",
+            code="",
+            recommendation="Avoid browser storage for tokens",
+        )
+        issue_with_code = ExpertIssue(
+            title="Almacenamiento inseguro de tokens en localStorage",
+            description="Tokens are stored in localStorage",
+            severity="HIGH",
+            category="Insecure Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens persisted in localStorage",
+            code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
+            recommendation="Use HttpOnly Secure SameSite cookies",
+        )
+
+        merger.add_expert_result(ExpertResult("auth_expert", [issue_without_code]))
+        merger.add_expert_result(ExpertResult("web_expert", [issue_with_code]))
+
+        merged = merger.get_merged_issues()
+        assert len(merged) == 1
+        assert merged[0].title == issue_with_code.title
+        assert merged[0].code == issue_with_code.code
+        assert merged[0].category == issue_with_code.category
 
     def test_status_failed_with_critical(self):
         """Status should be FAILED with CRITICAL issues."""

@@ -6,6 +6,7 @@ Final node that deduplicates and determines final status.
 import logging
 from typing import Any
 
+from code_analysis.domain.entities.expert_result import ExpertResult
 from code_analysis.domain.services.findings_merger import FindingsMerger
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
@@ -42,32 +43,8 @@ class MergeFindingsNode:
 
             # Create merger and process all issues
             merger = FindingsMerger()
-            for issue in issues:
-                # Recreate ExpertIssue-like object for merger
-                # (issues are already ExpertIssue objects from expert nodes)
-                from code_analysis.domain.entities.expert_result import ExpertResult
-
-                result = ExpertResult(
-                    expert_name="merged",
-                    issues=issues,
-                )
-                # Note: FindingsMerger.add_expert_result expects ExpertResult
-                # We need to refactor this slightly
-                merger.add_expert_result(result)
-                break  # Add all issues at once
-
-            # Actually, let's merge differently since issues are already collected
-            # Just deduplicate directly
-            seen_keys: set[tuple[str, int, str]] = set()
-            unique_issues = []
-
-            for issue in issues:
-                key = issue.get_dedup_key()
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    unique_issues.append(issue)
-                else:
-                    LOGGER.debug("Duplicate issue filtered: %s", key)
+            merger.add_expert_result(ExpertResult(expert_name="merged", issues=issues))
+            unique_issues = merger.get_merged_issues()
 
             LOGGER.info("After deduplication: %d unique issues", len(unique_issues))
 

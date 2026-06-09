@@ -260,6 +260,50 @@ class TestMergeFindingsNode:
         final_output = result.get("final_output", {})
         assert len(final_output.get("issues", [])) == 1
 
+    def test_deduplication_preserves_code_bearing_issue(self, node):
+        """Duplicate merge should prefer the finding that has code."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        issue_without_code = ExpertIssue(
+            title="Token storage risk",
+            description="Tokens are persisted in browser storage",
+            severity="HIGH",
+            category="Auth Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens in localStorage",
+            code="",
+            recommendation="Avoid browser storage for tokens",
+        )
+        issue_with_code = ExpertIssue(
+            title="Almacenamiento inseguro de tokens en localStorage",
+            description="Tokens are stored in localStorage",
+            severity="HIGH",
+            category="Insecure Storage",
+            path="services/auth/tokenStorage.ts",
+            line=16,
+            summary="Tokens persisted in localStorage",
+            code="window.localStorage.setItem(KEYS.ACCESS, tokens.accessToken);",
+            recommendation="Use HttpOnly Secure SameSite cookies",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue_without_code, issue_with_code],
+        }
+
+        result = node(state)
+
+        final_output = result.get("final_output", {})
+        issues = final_output.get("issues", [])
+        assert len(issues) == 1
+        assert issues[0]["title"] == issue_with_code.title
+        assert issues[0]["code"] == issue_with_code.code
+
 
 class TestAgentState:
     """Tests for AgentState TypedDict."""
