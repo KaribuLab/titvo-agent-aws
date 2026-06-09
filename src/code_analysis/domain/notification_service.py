@@ -62,20 +62,34 @@ class NotificationService:
         LOGGER.info("Report result: %s", report_result)
         notifications_results["report_url"] = report_result["reportURL"]
         if result_dto.source == TaskSource.BITBUCKET.value:
-            bitbucket_code_insights_input_dto = BitbucketCodeInsightsInputDto(
-                reportURL=report_result["reportURL"],
-                workspaceId=result_dto.args.get("bitbucket_workspace"),
-                commitHash=result_dto.args.get("bitbucket_commit"),
-                repoSlug=result_dto.args.get("bitbucket_repo_slug"),
-                status=result_dto.status,
-                annotations=issues,
-            )
-            bitbucket_result = self.bitbucket_repository.create_code_insights_report(
-                bitbucket_code_insights_input_dto
-            )
-            notifications_results["code_insights_url"] = bitbucket_result[
-                "codeInsightsURL"
-            ]
+            try:
+                bitbucket_code_insights_input_dto = BitbucketCodeInsightsInputDto(
+                    reportURL=report_result["reportURL"],
+                    workspaceId=result_dto.args.get("bitbucket_workspace"),
+                    commitHash=result_dto.args.get("bitbucket_commit"),
+                    repoSlug=result_dto.args.get("bitbucket_repo_slug"),
+                    status=result_dto.status,
+                    annotations=issues,
+                    scanMode=result_dto.args.get("scan_mode", "commit"),
+                )
+                create_code_insights = (
+                    self.bitbucket_repository.create_code_insights_report
+                )
+                bitbucket_result = create_code_insights(
+                    bitbucket_code_insights_input_dto
+                )
+                code_insights_url = bitbucket_result.get("codeInsightsURL")
+                if not code_insights_url:
+                    raise ValueError("Code Insights response missing codeInsightsURL")
+                notifications_results["code_insights_url"] = code_insights_url
+            except Exception as exc:
+                LOGGER.warning(
+                    "Bitbucket Code Insights notification failed; "
+                    "keeping HTML report: %s",
+                    exc,
+                    exc_info=True,
+                )
+                notifications_results["code_insights_error"] = str(exc)
         elif result_dto.source == TaskSource.GITHUB.value:
             github_result = self.github_repository.create_github_issue(
                 ResultDto(

@@ -28,6 +28,7 @@ class LambdaBitbucketRepository(IBitbucketRepository):
             "commitHash": bitbucket_code_insights_input_dto.commitHash,
             "repoSlug": bitbucket_code_insights_input_dto.repoSlug,
             "status": bitbucket_code_insights_input_dto.status,
+            "scanMode": bitbucket_code_insights_input_dto.scanMode,
             "annotations": [
                 asdict(issue)
                 if is_dataclass(issue) and not isinstance(issue, type)
@@ -45,8 +46,17 @@ class LambdaBitbucketRepository(IBitbucketRepository):
             )
 
         output_payload = response["Payload"].read().decode("utf-8")
+        output = json.loads(output_payload)
+        if output.get("errorType"):
+            raise Exception(
+                output.get("errorMessage", "Bitbucket Code Insights Lambda failed")
+            )
+        if not output.get("codeInsightsURL"):
+            raise Exception(
+                "Bitbucket Code Insights Lambda response missing codeInsightsURL"
+            )
         LOGGER.info(
             "Code insights report created successfully %s",
             output_payload,
         )
-        return json.loads(output_payload)
+        return output

@@ -12,3 +12,4 @@ class BitbucketCodeInsightsInputDto:
     repoSlug: str
     status: str
     annotations: List[IssueDto]
+    scanMode: str = "commit"
