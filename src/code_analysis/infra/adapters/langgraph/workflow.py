@@ -51,7 +51,7 @@ class LangGraphWorkflowBuilder:
         mcp_node = MCPRetrievalNode(self._mcp_client)
         rag_node = self._rag_node
         expert_nodes = create_expert_nodes(self._model)
-        merge_node = MergeFindingsNode()
+        merge_node = MergeFindingsNode(self._model)
 
         # Build graph
         workflow = StateGraph(AgentState)

@@ -304,6 +304,149 @@ class TestMergeFindingsNode:
         assert issues[0]["title"] == issue_with_code.title
         assert issues[0]["code"] == issue_with_code.code
 
+    def test_semantic_deduplication_groups_duplicate_findings(self):
+        """Semantic pass should group duplicate findings using compact IDs."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(
+            content='{"duplicate_groups":[[0,1]]}'
+        )
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Redirección abierta en URL externa",
+            description="long description should not be sent",
+            severity="MEDIUM",
+            category="Open Redirect",
+            path="utils/resolveWebView.ts",
+            line=23,
+            summary="Apertura de URL externa sin allowlist",
+            code='window.open(url, "_blank", "noopener,noreferrer");',
+            recommendation="long recommendation should not be sent",
+        )
+        issue2 = ExpertIssue(
+            title="URL externa en WebView sin validación",
+            description="another long description should not be sent",
+            severity="MEDIUM",
+            category="WebView",
+            path="utils/resolveWebView.ts",
+            line=40,
+            summary="Falta validación de URL antes de navegar",
+            code='router.push({ pathname: "/webview", params: { url } });',
+            recommendation="another long recommendation should not be sent",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["title"] == issue2.title
+        prompt = model.invoke.call_args.args[0][0].content
+        assert "long description" not in prompt
+        assert "long recommendation" not in prompt
+        assert "duplicate_groups" in prompt
+
+    def test_semantic_deduplication_invalid_json_falls_back(self):
+        """Invalid model responses should keep deterministic results."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(content="not json")
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="MEDIUM",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding B",
+            description="B",
+            severity="MEDIUM",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="bar();",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        assert len(result["final_output"]["issues"]) == 2
+
+    def test_semantic_deduplication_keeps_highest_severity(self):
+        """Semantic merge should keep the highest severity from duplicates."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(content='{"duplicate_groups":[[0,1]]}')
+        node = MergeFindingsNode(model)
+
+        low_with_more_code = ExpertIssue(
+            title="Finding with more code",
+            description="A",
+            severity="LOW",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="const token = localStorage.getItem('token'); send(token);",
+            recommendation="Fix A",
+        )
+        high_with_less_code = ExpertIssue(
+            title="Finding with higher severity",
+            description="B",
+            severity="HIGH",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="send(token);",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [low_with_more_code, high_with_less_code],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["title"] == low_with_more_code.title
+        assert issues[0]["severity"] == "HIGH"
+
 
 class TestAgentState:
     """Tests for AgentState TypedDict."""
