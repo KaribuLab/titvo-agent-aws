@@ -44,6 +44,7 @@ class AgentState(TypedDict):
     # Final output
     status: NotRequired[str]  # COMPLETED, WARNING, FAILED
     error: NotRequired[str | None]
+    final_output: NotRequired[dict[str, Any]]
 
     # Metadata for tracing
     expert_metadata: NotRequired[dict[str, Any]]

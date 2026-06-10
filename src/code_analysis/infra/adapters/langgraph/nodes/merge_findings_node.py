@@ -81,10 +81,12 @@ class MergeFindingsNode:
                 len(unique_issues),
             )
 
-            # Return final state
+            # Return final state with consolidated issues so both
+            # final_output and state.issues survive the StateGraph schema
             return {
                 "status": status,
                 "final_output": result,
+                "issues": unique_issues,
             }
 
         except Exception as e:

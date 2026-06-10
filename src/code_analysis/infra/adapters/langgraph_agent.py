@@ -162,6 +162,11 @@ class LangGraphAgent(AbstractAgent):
             # Extract final output
             final_output = result.get("final_output", {})
             if not final_output:
+                LOGGER.warning(
+                    "[LangGraphAgent] final_output missing from workflow result; "
+                    "falling back to state.issues. result_keys=%s",
+                    list(result.keys()),
+                )
                 # Fallback: construct from state
                 final_output = {
                     "status": result.get("status", "FAILED"),

@@ -860,6 +860,63 @@ class TestMergeFindingsNode:
         assert issues[0]["line"] == 16
         assert issues[0]["code"] == duplicate_code
 
+    def test_merge_node_returns_final_output_and_consolidated_issues(self):
+        """Merge node should return both final_output and consolidated issues."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(
+            content=(
+                '{"issues":[{"title":"Consolidated A",'
+                '"description":"A","severity":"HIGH","category":"A",'
+                '"path":"src/app.ts","line":5,'
+                '"summary":"A","code":"foo();","recommendation":"Fix A"}]}'
+            )
+        )
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="HIGH",
+            category="A",
+            path="src/app.ts",
+            line=5,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding A dup",
+            description="A duplicate",
+            severity="HIGH",
+            category="B",
+            path="src/app.ts",
+            line=5,
+            summary="A dup",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        assert "final_output" in result
+        assert "issues" in result
+        assert result["final_output"]["status"] == "FAILED"
+        assert len(result["final_output"]["issues"]) == 1
+        assert result["final_output"]["issues"][0]["title"] == "Consolidated A"
+        assert len(result["issues"]) == 1
+        assert result["issues"][0].title == "Consolidated A"
+
 
 class TestAgentState:
     """Tests for AgentState TypedDict."""
@@ -894,6 +951,21 @@ class TestAgentState:
         }
         # rag_chunks is NotRequired, should default to missing
         assert state.get("rag_chunks") is None
+
+    def test_final_output_is_optional(self):
+        """final_output should be optional (NotRequired) in AgentState."""
+        state: AgentState = {
+            "task_id": "abc123",
+            "repository_url": "https://github.com/test/repo",
+            "branch": "main",
+            "commit_hash": "abc123def",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 0,
+            "issues": [],
+        }
+        # final_output is NotRequired, should default to missing
+        assert state.get("final_output") is None
 
 
 class TestLangGraphWorkflowWithRag:
