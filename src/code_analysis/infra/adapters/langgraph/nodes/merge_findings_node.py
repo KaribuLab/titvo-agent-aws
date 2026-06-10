@@ -17,7 +17,7 @@ from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.prompts import get_findings_consolidation_prompt
 
 LOGGER = logging.getLogger(__name__)
-CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v3"
+CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v4"
 
 
 class MergeFindingsNode:
@@ -175,24 +175,29 @@ class MergeFindingsNode:
         )
         response = self._model.invoke([HumanMessage(content=prompt)])
         content = getattr(response, "content", response)
+        response_shape = self._describe_response_shape(content)
         LOGGER.info(
             "Findings consolidation response received: trace_version=%s "
-            "prompt_hash=%s response_length=%d",
+            "prompt_hash=%s response_shape=%s response_length=%d",
             CONSOLIDATION_TRACE_VERSION,
             prompt_hash,
+            response_shape,
             len(str(content)),
         )
-        content_text = str(content)
         try:
-            data = self._parse_json_object(content_text)
+            data = self._parse_json_object(content)
         except Exception as parse_exc:
+            content_text = str(content)
             LOGGER.warning(
                 "Findings consolidation parse failed; attempting repair: "
-                "trace_version=%s prompt_hash=%s error=%s response_length=%d",
+                "trace_version=%s prompt_hash=%s error=%s response_shape=%s "
+                "response_length=%d response_preview=%s",
                 CONSOLIDATION_TRACE_VERSION,
                 prompt_hash,
                 parse_exc,
+                response_shape,
                 len(content_text),
+                self._safe_response_preview(content),
             )
             try:
                 repaired_content = self._repair_json_response(content_text, prompt_hash)
@@ -355,9 +360,13 @@ class MergeFindingsNode:
         )
         return repaired
 
-    def _parse_json_object(self, content: str) -> dict[str, Any]:
+    def _parse_json_object(self, content: Any) -> dict[str, Any]:
         errors = []
         for candidate in self._json_candidates(content):
+            if isinstance(candidate, dict):
+                if "issues" in candidate:
+                    return candidate
+                continue
             try:
                 data = json.loads(candidate)
             except json.JSONDecodeError as exc:
@@ -370,23 +379,117 @@ class MergeFindingsNode:
             raise ValueError(errors[-1])
         raise ValueError("No JSON object found in consolidation response")
 
-    @staticmethod
-    def _json_candidates(content: str) -> list[str]:
-        candidates = [content.strip()]
+    def _json_candidates(self, content: Any) -> list[dict[str, Any] | str]:
+        candidates: list[dict[str, Any] | str] = []
+        self._collect_json_candidates(content, candidates)
+
+        unique_candidates: list[dict[str, Any] | str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            marker = (
+                json.dumps(candidate, sort_keys=True, default=str)
+                if isinstance(candidate, dict)
+                else candidate
+            )
+            if marker and marker not in seen:
+                seen.add(marker)
+                unique_candidates.append(candidate)
+        return unique_candidates
+
+    def _collect_json_candidates(
+        self,
+        content: Any,
+        candidates: list[dict[str, Any] | str],
+    ) -> None:
+        if isinstance(content, dict):
+            if "issues" in content:
+                candidates.append(content)
+            for key in ("text", "content"):
+                if key in content:
+                    self._collect_json_candidates(content[key], candidates)
+            return
+
+        if isinstance(content, list):
+            for item in content:
+                self._collect_json_candidates(item, candidates)
+            return
+
+        if not isinstance(content, str):
+            return
+
+        stripped = content.strip()
+        if not stripped:
+            return
+        candidates.append(stripped)
+
         fenced_blocks = re.findall(
             r"```(?:json)?\s*(.*?)```",
-            content,
+            stripped,
             re.DOTALL | re.IGNORECASE,
         )
-        candidates.extend(block.strip() for block in fenced_blocks)
-        match = re.search(r"\{.*\}", content, re.DOTALL)
+        candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+        match = re.search(r"\{.*\}", stripped, re.DOTALL)
         if match:
             candidates.append(match.group(0).strip())
 
-        unique_candidates = []
-        seen = set()
-        for candidate in candidates:
-            if candidate and candidate not in seen:
-                seen.add(candidate)
-                unique_candidates.append(candidate)
-        return unique_candidates
+    def _describe_response_shape(self, content: Any) -> str:
+        if isinstance(content, str):
+            return f"str(len={len(content)})"
+        if isinstance(content, list):
+            item_shapes = [self._describe_response_shape(item) for item in content[:3]]
+            suffix = ",..." if len(content) > 3 else ""
+            return f"list(len={len(content)},items=[{','.join(item_shapes)}{suffix}])"
+        if isinstance(content, dict):
+            keys = ",".join(str(key) for key in list(content.keys())[:6])
+            suffix = ",..." if len(content) > 6 else ""
+            text_shape = ""
+            if "text" in content:
+                text_shape = f",text={self._describe_response_shape(content['text'])}"
+            return f"dict(keys=[{keys}{suffix}]{text_shape})"
+        return type(content).__name__
+
+    def _safe_response_preview(self, content: Any, limit: int = 1200) -> str:
+        redacted = self._redact_response_content(content)
+        try:
+            preview = json.dumps(redacted, ensure_ascii=False, default=str)
+        except TypeError:
+            preview = str(redacted)
+        preview = self._redact_code_fields(preview)
+        if len(preview) > limit:
+            return f"{preview[:limit]}...(truncated,len={len(preview)})"
+        return preview
+
+    def _redact_response_content(self, content: Any) -> Any:
+        if isinstance(content, dict):
+            redacted = {}
+            for key, value in content.items():
+                if str(key) == "code":
+                    code = self._normalize_code(str(value))
+                    redacted[key] = {
+                        "redacted": True,
+                        "length": len(str(value)),
+                        "hash": self._hash_text(code),
+                    }
+                else:
+                    redacted[key] = self._redact_response_content(value)
+            return redacted
+        if isinstance(content, list):
+            return [self._redact_response_content(item) for item in content]
+        return content
+
+    def _redact_code_fields(self, text: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            prefix = match.group("prefix")
+            value = match.group("value")
+            code = self._normalize_code(value)
+            return (
+                f'{prefix}{{"redacted":true,"length":{len(value)},'
+                f'"hash":"{self._hash_text(code)}"}}'
+            )
+
+        return re.sub(
+            r"(?P<prefix>[\"']code[\"']\s*:\s*)[\"'](?P<value>[^\"']*)[\"']",
+            replace,
+            text,
+        )

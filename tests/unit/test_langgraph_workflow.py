@@ -1,5 +1,6 @@
 """Tests for LangGraph workflow builder."""
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -418,6 +419,76 @@ class TestMergeFindingsNode:
         assert result["final_output"]["issues"][0]["title"] == "Finding A"
         assert model.invoke.call_count == 1
 
+    def test_findings_consolidation_parses_structured_content_block(self):
+        """Structured chat blocks may already contain a text object."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.return_value = MagicMock(
+            content=[
+                {
+                    "type": "text",
+                    "text": {
+                        "issues": [
+                            {
+                                "title": "Finding A",
+                                "description": "A",
+                                "severity": "MEDIUM",
+                                "category": "A",
+                                "path": "same/file.ts",
+                                "line": 10,
+                                "summary": "A",
+                                "code": "foo();",
+                                "recommendation": "Fix A",
+                            }
+                        ]
+                    },
+                    "annotations": [],
+                    "id": "msg_123",
+                }
+            ]
+        )
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="MEDIUM",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding B",
+            description="B",
+            severity="MEDIUM",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="bar();",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        result = node(state)
+
+        issues = result["final_output"]["issues"]
+        assert len(issues) == 1
+        assert issues[0]["title"] == "Finding A"
+        assert model.invoke.call_count == 1
+
     def test_findings_consolidation_repairs_python_style_dict(self):
         """Invalid Python-style dict responses should be repaired by the model."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
@@ -483,6 +554,74 @@ class TestMergeFindingsNode:
         repair_prompt = model.invoke.call_args_list[1].args[0][0].content
         assert "JSON estricto" in repair_prompt
         assert "No cambies el contenido semántico" in repair_prompt
+
+    def test_findings_consolidation_parse_warning_logs_redacted_preview(
+        self, caplog
+    ):
+        """Parse failures should show response shape without raw code snippets."""
+        from code_analysis.domain.entities.expert_result import ExpertIssue
+
+        model = MagicMock()
+        model.invoke.side_effect = [
+            MagicMock(
+                content=[
+                    {
+                        "type": "text",
+                        "text": {
+                            "unexpected": [
+                                {
+                                    "title": "Malformed",
+                                    "code": "secretTokenStore();",
+                                }
+                            ]
+                        },
+                    }
+                ]
+            ),
+            MagicMock(content="still not json"),
+        ]
+        node = MergeFindingsNode(model)
+
+        issue1 = ExpertIssue(
+            title="Finding A",
+            description="A",
+            severity="MEDIUM",
+            category="A",
+            path="same/file.ts",
+            line=10,
+            summary="A",
+            code="foo();",
+            recommendation="Fix A",
+        )
+        issue2 = ExpertIssue(
+            title="Finding B",
+            description="B",
+            severity="MEDIUM",
+            category="B",
+            path="same/file.ts",
+            line=20,
+            summary="B",
+            code="bar();",
+            recommendation="Fix B",
+        )
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 5,
+            "issues": [issue1, issue2],
+        }
+
+        with caplog.at_level(logging.WARNING):
+            result = node(state)
+
+        assert len(result["final_output"]["issues"]) == 2
+        assert "response_shape=list" in caplog.text
+        assert "response_preview=" in caplog.text
+        assert "redacted" in caplog.text
+        assert "secretTokenStore();" not in caplog.text
 
     def test_findings_consolidation_invalid_json_falls_back(self):
         """Invalid model and repair responses should keep original findings."""
