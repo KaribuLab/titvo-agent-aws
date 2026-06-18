@@ -143,6 +143,83 @@ class TestMCPRetrievalNode:
         )
         assert result["files"] == [{"path": "src/app.py", "content": "print('hello')"}]
 
+    @pytest.mark.asyncio
+    async def test_empty_file_paths_returns_failed(self):
+        """Commit sin archivos debe fallar con mcp_error."""
+        git_tool = MagicMock()
+        git_tool.name = "mcp.tool.git.commit-files"
+        git_tool.ainvoke = AsyncMock(return_value={"jobId": "job-1"})
+
+        poll_tool = MagicMock()
+        poll_tool.name = "mcp.tool.git.commit-files.poll"
+        poll_tool.ainvoke = AsyncMock(
+            return_value={"status": "SUCCESS", "data": {"filesPaths": []}}
+        )
+
+        client = MagicMock()
+        client.get_tools = AsyncMock(return_value=[git_tool, poll_tool])
+
+        node = MCPRetrievalNode(client)
+        result = await node(
+            {
+                "task_id": "task-1",
+                "repository_url": "https://github.com/org/repo",
+                "branch": "main",
+                "commit_hash": "abc123",
+                "extra_args": {},
+                "files": [],
+                "scaned_files": 0,
+                "issues": [],
+            }
+        )
+
+        assert result["status"] == "FAILED"
+        assert result["mcp_error"] == "No files in commit"
+        assert result["scaned_files"] == 0
+
+    @pytest.mark.asyncio
+    async def test_unreadable_file_paths_returns_failed(self):
+        """Rutas sin contenido legible deben fallar."""
+        git_tool = MagicMock()
+        git_tool.name = "mcp.tool.git.commit-files"
+        git_tool.ainvoke = AsyncMock(return_value={"jobId": "job-1"})
+
+        poll_tool = MagicMock()
+        poll_tool.name = "mcp.tool.git.commit-files.poll"
+        poll_tool.ainvoke = AsyncMock(
+            return_value={
+                "status": "SUCCESS",
+                "data": {"filesPaths": ["sha/a.py"]},
+            }
+        )
+
+        files_tool = MagicMock()
+        files_tool.name = "mcp.tool.files"
+        files_tool.ainvoke = AsyncMock(return_value={})
+
+        client = MagicMock()
+        client.get_tools = AsyncMock(
+            return_value=[git_tool, poll_tool, files_tool]
+        )
+
+        node = MCPRetrievalNode(client)
+        result = await node(
+            {
+                "task_id": "task-1",
+                "repository_url": "https://github.com/org/repo",
+                "branch": "main",
+                "commit_hash": "abc123",
+                "extra_args": {},
+                "files": [],
+                "scaned_files": 0,
+                "issues": [],
+            }
+        )
+
+        assert result["status"] == "FAILED"
+        assert result["mcp_error"] == "No files could be read from commit"
+        assert result["scaned_files"] == 0
+
 
 class TestMergeFindingsNode:
     """Tests for merge findings node."""
@@ -151,8 +228,8 @@ class TestMergeFindingsNode:
     def node(self):
         return MergeFindingsNode()
 
-    def test_empty_issues_returns_completed(self, node):
-        """No issues should return COMPLETED status."""
+    def test_zero_scaned_files_returns_failed(self, node):
+        """Sin archivos escaneados el análisis debe fallar."""
         state: AgentState = {
             "task_id": "test",
             "repository_url": "",
@@ -160,6 +237,37 @@ class TestMergeFindingsNode:
             "extra_args": {},
             "files": [],
             "scaned_files": 0,
+            "issues": [],
+        }
+        result = node(state)
+        assert result["status"] == "FAILED"
+        assert result["final_output"]["error"] == "No files scanned"
+
+    def test_mcp_error_returns_failed(self, node):
+        """Error de recuperación MCP debe propagarse como FAILED."""
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [],
+            "scaned_files": 0,
+            "mcp_error": "No files in commit",
+            "issues": [],
+        }
+        result = node(state)
+        assert result["status"] == "FAILED"
+        assert result["final_output"]["error"] == "No files in commit"
+
+    def test_empty_issues_with_scaned_files_returns_completed(self, node):
+        """Sin issues pero con archivos escaneados debe ser COMPLETED."""
+        state: AgentState = {
+            "task_id": "test",
+            "repository_url": "",
+            "commit_hash": "",
+            "extra_args": {},
+            "files": [{"path": "src/a.py", "content": "x = 1"}],
+            "scaned_files": 1,
             "issues": [],
         }
         result = node(state)

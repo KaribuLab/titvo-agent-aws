@@ -55,24 +55,34 @@ class MergeFindingsNode:
 
             LOGGER.info("After consolidation: %d unique issues", len(unique_issues))
 
-            # Determine status
-            has_critical_or_high = any(
-                issue.severity in ("CRITICAL", "HIGH") for issue in unique_issues
-            )
-
-            if has_critical_or_high:
+            mcp_error = state.get("mcp_error")
+            if mcp_error or scaned_files == 0:
                 status = "FAILED"
-            elif unique_issues:
-                status = "WARNING"
+                error_message = mcp_error or "No files scanned"
             else:
-                status = "COMPLETED"
+                has_critical_or_high = any(
+                    issue.severity in ("CRITICAL", "HIGH")
+                    for issue in unique_issues
+                )
+
+                if has_critical_or_high:
+                    status = "FAILED"
+                    error_message = None
+                elif unique_issues:
+                    status = "WARNING"
+                    error_message = None
+                else:
+                    status = "COMPLETED"
+                    error_message = None
 
             # Build final output
-            result = {
+            result: dict[str, Any] = {
                 "status": status,
                 "scaned_files": scaned_files,
                 "issues": [issue.to_dict() for issue in unique_issues],
             }
+            if error_message:
+                result["error"] = error_message
 
             LOGGER.info(
                 "Final result: status=%s, files=%d, issues=%d",

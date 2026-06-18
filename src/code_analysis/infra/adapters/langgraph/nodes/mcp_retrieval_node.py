@@ -195,6 +195,18 @@ class MCPRetrievalNode:
 
             LOGGER.info("[MCP Node] Successfully read %d files", len(files_content))
 
+            if not files_content:
+                LOGGER.error(
+                    "[MCP Node] No files read from storage (paths=%d)",
+                    len(file_paths),
+                )
+                return {
+                    "mcp_error": "No files could be read from commit",
+                    "status": "FAILED",
+                    "scaned_files": 0,
+                    "files": [],
+                }
+
             return {
                 "files": files_content,
                 "scaned_files": len(files_content),
