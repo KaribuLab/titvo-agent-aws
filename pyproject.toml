@@ -21,5 +21,6 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-sugar>=1.1.1",
     "ruff>=0.14.2",
 ]
