@@ -99,6 +99,7 @@ async def create_langgraph_agent(
     langfuse_handler: Optional[CallbackHandler],
     langfuse_metadata: Optional[dict[str, Any]],
     rag_node: Optional[RagRetrievalNode] = None,
+    ai_base_url: Optional[str] = None,
 ):
     """Create LangGraph agent with expert nodes."""
     LOGGER.info("Using LANGGRAPH agent mode (LangGraphAgent with expert nodes)")
@@ -111,6 +112,7 @@ async def create_langgraph_agent(
         ai_provider=ai_provider,
         ai_model=ai_model,
         ai_api_key=ai_api_key,
+        ai_base_url=ai_base_url,
     )
     tools_factory = AsyncMCPToolsFactory(
         mcp_client=MultiServerMCPClient(
@@ -195,6 +197,8 @@ async def main():
     ai_api_key = configuration_provider.get_secret("ai_api_key")
     if ai_api_key is None:
         raise ValueError("ai_api_key is not set")
+    ai_base_url = configuration_provider.get_value("ai_base_url")
+    LOGGER.debug("AI base url %s", ai_base_url)
     task_repository = DynamoTaskRepository(
         dynamo_client=create_boto3_client("dynamodb"),
         table_name=task_table_name,
@@ -256,6 +260,7 @@ async def main():
         langfuse_handler=langfuse_callback_handler,
         langfuse_metadata=langfuse_metadata,
         rag_node=rag_node,
+        ai_base_url=ai_base_url,
     )
 
     notification_service = NotificationService(
