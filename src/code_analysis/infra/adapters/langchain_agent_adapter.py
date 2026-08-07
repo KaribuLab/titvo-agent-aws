@@ -121,8 +121,20 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                 use_responses_api=False,
             )
         elif provider == AIProvider.ANTHROPIC:
+            if self._ai_base_url is not None:
+                return ChatAnthropic(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    base_url=self._ai_base_url,
+                )
             return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
         elif provider == AIProvider.GOOGLE:
+            if self._ai_base_url is not None:
+                return ChatGoogleGenerativeAI(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    client_options={"api_endpoint": self._ai_base_url},
+                )
             return ChatGoogleGenerativeAI(
                 model=self._ai_model, api_key=self._ai_api_key
             )

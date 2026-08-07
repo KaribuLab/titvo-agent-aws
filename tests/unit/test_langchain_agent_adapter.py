@@ -96,7 +96,7 @@ class TestCreateModelOpenAIBaseUrl:
 
 
 class TestCreateModelAnthropicAndGoogleRegression:
-    """Regression tests: anthropic/google ignore ai_base_url and stay unchanged."""
+    """Regression tests: anthropic/google behave unchanged when ai_base_url is unset."""
 
     def test_anthropic_unchanged(self):
         factory = LangchainAgentModelFactory(
@@ -119,17 +119,33 @@ class TestCreateModelAnthropicAndGoogleRegression:
         # ChatGoogleGenerativeAI stores the model with a "models/" prefix.
         assert model.model == "models/gemini-1.5-pro"
 
-    def test_anthropic_ignores_base_url(self):
-        """ai_base_url must not affect non-OpenAI providers."""
+
+class TestCreateModelAnthropicAndGoogleBaseUrl:
+    """Tests for ai_base_url support on Anthropic and Google (custom endpoints)."""
+
+    def test_anthropic_with_custom_base_url(self):
         factory = LangchainAgentModelFactory(
             ai_provider="anthropic",
             ai_model="claude-3-5-sonnet",
             ai_api_key="ant-key",
-            ai_base_url="https://should-be-ignored.example.com",
+            ai_base_url="https://my-anthropic-proxy.example.com",
         )
         model = factory.create_model()
         assert isinstance(model, ChatAnthropic)
-        assert model.model == "claude-3-5-sonnet"
+        assert model.anthropic_api_url == "https://my-anthropic-proxy.example.com"
+
+    def test_google_with_custom_base_url(self):
+        factory = LangchainAgentModelFactory(
+            ai_provider="google",
+            ai_model="gemini-1.5-pro",
+            ai_api_key="g-key",
+            ai_base_url="https://my-google-proxy.example.com",
+        )
+        model = factory.create_model()
+        assert isinstance(model, ChatGoogleGenerativeAI)
+        assert model.client_options == {
+            "api_endpoint": "https://my-google-proxy.example.com"
+        }
 
 
 class TestInvalidProviderFactory:
