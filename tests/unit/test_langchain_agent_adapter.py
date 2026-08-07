@@ -148,6 +148,45 @@ class TestCreateModelAnthropicAndGoogleBaseUrl:
         }
 
 
+class TestAiBaseUrlValidation:
+    """ai_base_url must be https:// (it carries ai_api_key in the Authorization
+    header), and an empty string must be treated the same as unset."""
+
+    @pytest.mark.parametrize(
+        "provider", ["openai", "openrouter", "anthropic", "google"]
+    )
+    def test_rejects_non_https_base_url(self, provider):
+        factory = LangchainAgentModelFactory(
+            ai_provider=provider,
+            ai_model="m",
+            ai_api_key="k",
+            ai_base_url="http://insecure.example.com",
+        )
+        with pytest.raises(ValueError, match="ai_base_url must use https://"):
+            factory.create_model()
+
+    def test_empty_string_base_url_treated_as_unset_for_openai(self):
+        factory = LangchainAgentModelFactory(
+            ai_provider="openai",
+            ai_model="gpt-4o",
+            ai_api_key="sk-key",
+            ai_base_url="",
+        )
+        model = factory.create_model()
+        assert isinstance(model, ChatOpenAI)
+        assert model.use_responses_api is True
+
+    def test_empty_string_base_url_uses_openrouter_default(self):
+        factory = LangchainAgentModelFactory(
+            ai_provider="openrouter",
+            ai_model="openai/gpt-4o",
+            ai_api_key="or-key",
+            ai_base_url="",
+        )
+        model = factory.create_model()
+        assert model.openai_api_base == "https://openrouter.ai/api/v1"
+
+
 class TestInvalidProviderFactory:
     """Regression: invalid provider at factory level raises ValueError."""
 

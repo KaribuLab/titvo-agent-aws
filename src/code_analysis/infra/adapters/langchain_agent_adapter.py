@@ -89,20 +89,27 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
 
     def create_model(self) -> BaseChatModel:
         provider = AIProvider.from_string(self._ai_provider)
+        # Treat an empty string the same as unset, and only ever forward
+        # https:// endpoints: ai_base_url ends up carrying ai_api_key in the
+        # Authorization header, so a plain-http or malformed value would leak
+        # the provider credentials to whatever host it points at.
+        base_url = self._ai_base_url or None
+        if base_url is not None and not base_url.startswith("https://"):
+            raise ValueError(f"ai_base_url must use https://, got: {base_url}")
         LOGGER.info(
             "Using provider=%s, model=%s, base_url=%s",
             provider.value,
             self._ai_model,
-            self._ai_base_url,
+            base_url,
         )
         if provider == AIProvider.OPENAI:
             # Custom OpenAI-compatible endpoints expose the Chat Completions
             # API, not the Responses API, so use_responses_api must be False.
-            if self._ai_base_url is not None:
+            if base_url is not None:
                 return ChatOpenAI(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
-                    base_url=self._ai_base_url,
+                    base_url=base_url,
                     use_responses_api=False,
                 )
             return ChatOpenAI(
@@ -113,27 +120,26 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
         elif provider == AIProvider.OPENROUTER:
             # OpenRouter is OpenAI-compatible but only supports Chat Completions,
             # never the Responses API.
-            base_url = self._ai_base_url or "https://openrouter.ai/api/v1"
             return ChatOpenAI(
                 model=self._ai_model,
                 api_key=self._ai_api_key,
-                base_url=base_url,
+                base_url=base_url or "https://openrouter.ai/api/v1",
                 use_responses_api=False,
             )
         elif provider == AIProvider.ANTHROPIC:
-            if self._ai_base_url is not None:
+            if base_url is not None:
                 return ChatAnthropic(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
-                    base_url=self._ai_base_url,
+                    base_url=base_url,
                 )
             return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
         elif provider == AIProvider.GOOGLE:
-            if self._ai_base_url is not None:
+            if base_url is not None:
                 return ChatGoogleGenerativeAI(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
-                    client_options={"api_endpoint": self._ai_base_url},
+                    client_options={"api_endpoint": base_url},
                 )
             return ChatGoogleGenerativeAI(
                 model=self._ai_model, api_key=self._ai_api_key
