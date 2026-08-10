@@ -27,6 +27,7 @@ class AIProvider(Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
+    OPENROUTER = "openrouter"
 
     @classmethod
     def from_string(cls, ai_provider: str) -> "AIProvider":
@@ -36,6 +37,8 @@ class AIProvider(Enum):
             return cls.ANTHROPIC
         elif ai_provider == "google":
             return cls.GOOGLE
+        elif ai_provider == "openrouter":
+            return cls.OPENROUTER
         else:
             raise ValueError(f"Invalid AI provider: {ai_provider}")
 
@@ -72,23 +75,72 @@ class AsyncMCPToolsFactory(AsyncAgentToolsFactory[BaseTool]):
 
 
 class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
-    def __init__(self, ai_provider: str, ai_model: str, ai_api_key: str):
+    def __init__(
+        self,
+        ai_provider: str,
+        ai_model: str,
+        ai_api_key: str,
+        ai_base_url: str | None = None,
+    ):
         self._ai_provider = ai_provider
         self._ai_model = ai_model
         self._ai_api_key = ai_api_key
+        self._ai_base_url = ai_base_url
 
     def create_model(self) -> BaseChatModel:
         provider = AIProvider.from_string(self._ai_provider)
-        LOGGER.info("Using provider=%s, model=%s", provider.value, self._ai_model)
+        # Treat an empty string the same as unset, and only ever forward
+        # https:// endpoints: ai_base_url ends up carrying ai_api_key in the
+        # Authorization header, so a plain-http or malformed value would leak
+        # the provider credentials to whatever host it points at.
+        base_url = self._ai_base_url or None
+        if base_url is not None and not base_url.startswith("https://"):
+            raise ValueError(f"ai_base_url must use https://, got: {base_url}")
+        LOGGER.info(
+            "Using provider=%s, model=%s, base_url=%s",
+            provider.value,
+            self._ai_model,
+            base_url,
+        )
         if provider == AIProvider.OPENAI:
+            # Custom OpenAI-compatible endpoints expose the Chat Completions
+            # API, not the Responses API, so use_responses_api must be False.
+            if base_url is not None:
+                return ChatOpenAI(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    base_url=base_url,
+                    use_responses_api=False,
+                )
             return ChatOpenAI(
                 model=self._ai_model,
                 api_key=self._ai_api_key,
                 use_responses_api=True,
             )
+        elif provider == AIProvider.OPENROUTER:
+            # OpenRouter is OpenAI-compatible but only supports Chat Completions,
+            # never the Responses API.
+            return ChatOpenAI(
+                model=self._ai_model,
+                api_key=self._ai_api_key,
+                base_url=base_url or "https://openrouter.ai/api/v1",
+                use_responses_api=False,
+            )
         elif provider == AIProvider.ANTHROPIC:
+            if base_url is not None:
+                return ChatAnthropic(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    base_url=base_url,
+                )
             return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
         elif provider == AIProvider.GOOGLE:
+            if base_url is not None:
+                return ChatGoogleGenerativeAI(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    client_options={"api_endpoint": base_url},
+                )
             return ChatGoogleGenerativeAI(
                 model=self._ai_model, api_key=self._ai_api_key
             )
