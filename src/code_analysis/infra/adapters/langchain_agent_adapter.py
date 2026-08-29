@@ -102,48 +102,77 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
             self._ai_model,
             base_url,
         )
+        # Requested with temperature=0 so expert/consolidation analysis is
+        # deterministic. Some providers (e.g. OpenAI reasoning models like
+        # gpt-5-non-chat) silently ignore or override this at construction
+        # time, so the *effective* value is re-read from the model below and
+        # logged rather than assumed.
         if provider == AIProvider.OPENAI:
             # Custom OpenAI-compatible endpoints expose the Chat Completions
             # API, not the Responses API, so use_responses_api must be False.
             if base_url is not None:
-                return ChatOpenAI(
+                model = ChatOpenAI(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
                     base_url=base_url,
                     use_responses_api=False,
+                    temperature=0,
                 )
-            return ChatOpenAI(
-                model=self._ai_model,
-                api_key=self._ai_api_key,
-                use_responses_api=True,
-            )
+            else:
+                model = ChatOpenAI(
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    use_responses_api=True,
+                    temperature=0,
+                )
         elif provider == AIProvider.OPENROUTER:
             # OpenRouter is OpenAI-compatible but only supports Chat Completions,
             # never the Responses API.
-            return ChatOpenAI(
+            model = ChatOpenAI(
                 model=self._ai_model,
                 api_key=self._ai_api_key,
                 base_url=base_url or "https://openrouter.ai/api/v1",
                 use_responses_api=False,
+                temperature=0,
             )
         elif provider == AIProvider.ANTHROPIC:
             if base_url is not None:
-                return ChatAnthropic(
+                model = ChatAnthropic(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
                     base_url=base_url,
+                    temperature=0,
                 )
-            return ChatAnthropic(model=self._ai_model, api_key=self._ai_api_key)
+            else:
+                model = ChatAnthropic(
+                    model=self._ai_model, api_key=self._ai_api_key, temperature=0
+                )
         elif provider == AIProvider.GOOGLE:
             if base_url is not None:
-                return ChatGoogleGenerativeAI(
+                model = ChatGoogleGenerativeAI(
                     model=self._ai_model,
                     api_key=self._ai_api_key,
                     client_options={"api_endpoint": base_url},
+                    temperature=0,
                 )
-            return ChatGoogleGenerativeAI(
-                model=self._ai_model, api_key=self._ai_api_key
+            else:
+                model = ChatGoogleGenerativeAI(
+                    model=self._ai_model, api_key=self._ai_api_key, temperature=0
+                )
+
+        effective_temperature = getattr(model, "temperature", None)
+        if effective_temperature == 0:
+            LOGGER.info(
+                "Model temperature=0 (deterministic sampling confirmed)",
             )
+        else:
+            LOGGER.warning(
+                "Model %s did not accept temperature=0 (effective=%s); "
+                "reproducibility across scans is not guaranteed for this model",
+                self._ai_model,
+                effective_temperature,
+            )
+        return model
 
 
 class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
@@ -168,10 +197,10 @@ class LangchainAgent(AbstractAgent[BaseTool, BaseChatModel]):
                 tools=tools,
             )
 
-    async def _invoke_wrapped(
-        self, message: AgentMessage, temperature: float = 0.0
-    ) -> AgentResponse:
-        config = {"temperature": temperature, "recursion_limit": 100}
+    async def _invoke_wrapped(self, message: AgentMessage) -> AgentResponse:
+        # Sampling temperature is fixed at model-construction time
+        # (LangchainAgentModelFactory.create_model), not per-invocation.
+        config = {"recursion_limit": 100}
         if (
             self.__langfuse_callback_handler is not None
             and self.__langfuse_metadata is not None

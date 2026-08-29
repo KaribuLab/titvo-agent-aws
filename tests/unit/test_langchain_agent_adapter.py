@@ -51,6 +51,7 @@ class TestCreateModelOpenRouter:
         assert model.use_responses_api is False
         assert model.openai_api_base == "https://openrouter.ai/api/v1"
         assert model.openai_api_key.get_secret_value() == "or-key"
+        assert model.temperature == 0
 
     def test_openrouter_with_custom_base_url(self):
         factory = LangchainAgentModelFactory(
@@ -63,6 +64,7 @@ class TestCreateModelOpenRouter:
         assert isinstance(model, ChatOpenAI)
         assert model.openai_api_base == "https://my-proxy.example.com/v1"
         assert model.use_responses_api is False
+        assert model.temperature == 0
 
 
 class TestCreateModelOpenAIBaseUrl:
@@ -81,6 +83,7 @@ class TestCreateModelOpenAIBaseUrl:
         assert model.openai_api_base == "https://gateway.example.com/v1"
         assert model.use_responses_api is False
         assert model.model_name == "gpt-4o"
+        assert model.temperature == 0
 
     def test_openai_without_base_url_uses_responses_api(self):
         """Regression: the default OpenAI path keeps use_responses_api=True."""
@@ -93,6 +96,7 @@ class TestCreateModelOpenAIBaseUrl:
         assert isinstance(model, ChatOpenAI)
         assert model.use_responses_api is True
         assert model.model_name == "gpt-4o"
+        assert model.temperature == 0
 
 
 class TestCreateModelAnthropicAndGoogleRegression:
@@ -107,6 +111,7 @@ class TestCreateModelAnthropicAndGoogleRegression:
         model = factory.create_model()
         assert isinstance(model, ChatAnthropic)
         assert model.model == "claude-3-5-sonnet"
+        assert model.temperature == 0
 
     def test_google_unchanged(self):
         factory = LangchainAgentModelFactory(
@@ -118,6 +123,7 @@ class TestCreateModelAnthropicAndGoogleRegression:
         assert isinstance(model, ChatGoogleGenerativeAI)
         # ChatGoogleGenerativeAI stores the model with a "models/" prefix.
         assert model.model == "models/gemini-1.5-pro"
+        assert model.temperature == 0
 
 
 class TestCreateModelAnthropicAndGoogleBaseUrl:
@@ -133,6 +139,7 @@ class TestCreateModelAnthropicAndGoogleBaseUrl:
         model = factory.create_model()
         assert isinstance(model, ChatAnthropic)
         assert model.anthropic_api_url == "https://my-anthropic-proxy.example.com"
+        assert model.temperature == 0
 
     def test_google_with_custom_base_url(self):
         factory = LangchainAgentModelFactory(
@@ -146,6 +153,7 @@ class TestCreateModelAnthropicAndGoogleBaseUrl:
         assert model.client_options == {
             "api_endpoint": "https://my-google-proxy.example.com"
         }
+        assert model.temperature == 0
 
 
 class TestAiBaseUrlValidation:
@@ -175,6 +183,7 @@ class TestAiBaseUrlValidation:
         model = factory.create_model()
         assert isinstance(model, ChatOpenAI)
         assert model.use_responses_api is True
+        assert model.temperature == 0
 
     def test_empty_string_base_url_uses_openrouter_default(self):
         factory = LangchainAgentModelFactory(
@@ -185,6 +194,7 @@ class TestAiBaseUrlValidation:
         )
         model = factory.create_model()
         assert model.openai_api_base == "https://openrouter.ai/api/v1"
+        assert model.temperature == 0
 
 
 class TestInvalidProviderFactory:

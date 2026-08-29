@@ -18,22 +18,45 @@ from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
 
-# Adaptive per-file character budget based on commit size.
-# Ensures the total prompt stays within the model's context window.
-# Ratios: chars ÷ 4 ≈ tokens (rough estimate).
+# Per-file character budget, independent of how many other files are in the
+# commit. Ratios: chars ÷ 4 ≈ tokens (rough estimate).
+
+# Generous cap applied to a file based on its own size — reached before any
+# other file in the commit is considered.
+_PER_FILE_CAP_CHARS = 30_000  # ≈ 7 500 tokens/file
+
+# Aggregate ceiling for the whole commit's formatted content, so the total
+# prompt still fits a 128k-token model window (leaving room for the system
+# prompt, RAG context and the other expert-node overhead). ≈ 50 k tokens.
+_GLOBAL_BUDGET_CHARS = 200_000
+
+# Floor so a single file is never crushed to something unusable when the
+# aggregate shrink kicks in.
+_MIN_FILE_CHARS = 3_000
 
 
-def _max_file_chars(num_files: int) -> int:
-    """Return per-file char budget so total prompt fits in a 128k-token model."""
-    if num_files <= 5:
-        return 30_000  # ≈ 7 500 tokens/file → ~37 k total
-    if num_files <= 10:
-        return 15_000  # ≈ 3 750 tokens/file → ~37 k total
-    if num_files <= 20:
-        return 8_000  # ≈ 2 000 tokens/file → ~40 k total
-    if num_files <= 40:
-        return 5_000  # ≈ 1 250 tokens/file → ~50 k total
-    return 3_000  # ≈  750 tokens/file → fits very large commits
+def _compute_file_budgets(files: list[dict[str, str]]) -> dict[str, int]:
+    """Return each file's truncation budget, keyed by path.
+
+    Each file's budget starts at its own content size (capped at
+    ``_PER_FILE_CAP_CHARS``) — it does NOT depend on how many other files are
+    in the commit. Only when the commit's *actual total content* would
+    exceed ``_GLOBAL_BUDGET_CHARS`` do budgets shrink together, proportionally
+    to that real total (not to file count), so an unchanged file gets the
+    same budget whether it sits next to 2 files or 50 tiny ones — a commit
+    with many small files no longer forces everyone down just because of
+    the file count.
+    """
+    base_caps = {f["path"]: min(len(f["content"]), _PER_FILE_CAP_CHARS) for f in files}
+    total = sum(base_caps.values())
+    if total <= _GLOBAL_BUDGET_CHARS or total == 0:
+        return base_caps
+
+    shrink = _GLOBAL_BUDGET_CHARS / total
+    return {
+        path: max(_MIN_FILE_CHARS, int(cap * shrink))
+        for path, cap in base_caps.items()
+    }
 
 
 class BaseExpertNode(ABC):
@@ -181,13 +204,15 @@ class BaseExpertNode(ABC):
     def _format_files(self, files: list[dict[str, str]]) -> str:
         """Format commit files for LLM consumption.
 
-        Uses an adaptive per-file char budget (smaller budget for large commits)
-        and structure-aware truncation so that even truncated files preserve
-        imports + function/class signatures alongside as much body as fits.
+        Each file's char budget is driven by its own size (see
+        ``_compute_file_budgets``), with structure-aware truncation so that
+        even truncated files preserve imports + function/class signatures
+        alongside as much body as fits.
         """
-        limit = _max_file_chars(len(files))
+        budgets = _compute_file_budgets(files)
         parts = []
         for f in files:
+            limit = budgets[f["path"]]
             content, truncated = self._smart_truncate(f["content"], limit)
             parts.append(f"=== FILE: {f['path']} ===")
             parts.append(content)

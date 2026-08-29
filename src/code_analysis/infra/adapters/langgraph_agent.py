@@ -92,16 +92,18 @@ class LangGraphAgent(AbstractAgent):
     async def _invoke_wrapped(
         self,
         message: AgentMessage,
-        temperature: float = 0.0,
     ) -> AgentResponse:
         """Execute the LangGraph workflow.
 
         Args:
             message: Contains task parameters in content
-            temperature: Ignored (experts use deterministic analysis)
 
         Returns:
             AgentResponse with JSON result
+
+        Note:
+            Deterministic sampling (temperature=0) is enforced when the model
+            is built in LangchainAgentModelFactory.create_model(), not here.
         """
         if self._workflow is None:
             raise RuntimeError("Agent not initialized. Call invoke() first.")

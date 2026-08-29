@@ -73,16 +73,12 @@ class AbstractAgent(ABC, Generic[T, M]):
         await self._initialize(self._model, self._tools)
 
     @abstractmethod
-    def _invoke_wrapped(
-        self, message: AgentMessage, temperature: float = 0.0
-    ) -> AgentResponse:
+    def _invoke_wrapped(self, message: AgentMessage) -> AgentResponse:
         raise NotImplementedError
 
-    async def invoke(
-        self, message: AgentMessage, temperature: float = 0.0
-    ) -> AgentMessage:
+    async def invoke(self, message: AgentMessage) -> AgentMessage:
         await self.__ensure_initialized()
-        response = await self._invoke_wrapped(message, temperature)
+        response = await self._invoke_wrapped(message)
         return AgentResponse(
             content=response.content,
             metadata=response.metadata,
