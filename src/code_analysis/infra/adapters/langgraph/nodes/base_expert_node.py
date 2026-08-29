@@ -53,10 +53,20 @@ def _compute_file_budgets(files: list[dict[str, str]]) -> dict[str, int]:
         return base_caps
 
     shrink = _GLOBAL_BUDGET_CHARS / total
-    return {
+    floored = {
         path: max(_MIN_FILE_CHARS, int(cap * shrink))
         for path, cap in base_caps.items()
     }
+    if sum(floored.values()) <= _GLOBAL_BUDGET_CHARS:
+        return floored
+
+    # Too many files for the floor to be honored without blowing the
+    # aggregate ceiling (e.g. hundreds of small/medium files). The ceiling
+    # is the hard constraint (an oversized prompt can get rejected or
+    # silently truncated by the provider), so drop the floor here and fall
+    # back to pure proportional shrink, which by construction always sums
+    # to at most _GLOBAL_BUDGET_CHARS.
+    return {path: max(1, int(cap * shrink)) for path, cap in base_caps.items()}
 
 
 class BaseExpertNode(ABC):
