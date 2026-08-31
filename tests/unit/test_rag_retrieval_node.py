@@ -1,7 +1,5 @@
 """Tests for RagRetrievalNode."""
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from code_analysis.domain.ports.rag_context_port import IRagContextPort
