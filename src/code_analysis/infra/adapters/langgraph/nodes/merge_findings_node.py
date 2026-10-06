@@ -1,6 +1,17 @@
 """Merge Findings Node for LangGraph workflow.
 
-Final node that asks the consolidation model for final issues and status.
+Final node. Consolidates expert findings in two levels and builds the final
+envelope:
+
+* **L1** (deterministic): exact-evidence dedupe by ``(path, line, category,
+  normalized code)``, keeping the highest severity.
+* **L2** (model-led, per file): findings of the same file are consolidated by
+  the model in chunks of at most ``_L2_MAX_FINDINGS_PER_CALL``. Every output
+  issue must list the ``source_ids`` it represents; a group whose consolidation
+  loses, invents or re-rates a finding is rejected and keeps its L1 findings.
+
+The node also reports an ``incomplete`` block when expert batches failed, and
+never lets such a scan end as ``COMPLETED``.
 """
 
 import json
@@ -12,12 +23,41 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
-from code_analysis.domain.entities.expert_result import ExpertIssue
+from code_analysis.domain.entities.expert_result import ExpertIssue, normalize_code
+from code_analysis.domain.services.findings_merger import (
+    FindingsMerger,
+    max_severity,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.prompts import get_findings_consolidation_prompt
 
 LOGGER = logging.getLogger(__name__)
-CONSOLIDATION_TRACE_VERSION = "2026-06-09-agent-only-v4"
+CONSOLIDATION_TRACE_VERSION = "2026-10-06-two-level-v5"
+
+_L2_MAX_FINDINGS_PER_CALL = 20
+_ISSUE_FIELDS = (
+    "title",
+    "description",
+    "severity",
+    "category",
+    "path",
+    "line",
+    "summary",
+    "code",
+    "recommendation",
+)
+
+
+def _issue_sort_key(issue: ExpertIssue) -> tuple:
+    meta = issue.metadata or {}
+    return (
+        str(meta.get("expert", "")),
+        int(meta.get("batch_index", 0) or 0),
+        issue.path,
+        int(issue.line or 0),
+        issue.category,
+        issue.title,
+    )
 
 
 class MergeFindingsNode:
@@ -27,140 +67,199 @@ class MergeFindingsNode:
         self._model = model
 
     def __call__(self, state: AgentState) -> dict[str, Any]:
-        """Merge findings and return final result.
-
-        Args:
-            state: Current workflow state with all issues
-
-        Returns:
-            Final state with status and formatted output
-        """
         try:
-            issues = state.get("issues", [])
+            raw_issues = sorted(state.get("issues", []) or [], key=_issue_sort_key)
             scaned_files = state.get("scaned_files", 0)
-            expert_errors = state.get("expert_errors", [])
+            expert_errors = state.get("expert_errors", []) or []
+            failed_batches = state.get("failed_batches", []) or []
+            expert_metadata = state.get("expert_metadata", {}) or {}
 
             LOGGER.info(
-                "Merging %d issues from experts (%d expert errors)",
-                len(issues),
+                "Merging %d issues from experts (%d expert errors, %d failed batches)",
+                len(raw_issues),
                 len(expert_errors),
+                len(failed_batches),
             )
+            for error in expert_errors:
+                LOGGER.warning("Expert error: %s", error)
 
-            # Log any expert errors
-            if expert_errors:
-                for error in expert_errors:
-                    LOGGER.warning("Expert error: %s", error)
+            l1_issues = FindingsMerger.dedupe(raw_issues)
+            final_issues, l2_metrics = self._consolidate_l2(l1_issues)
+            metrics = {
+                "l1_in": len(raw_issues),
+                "l1_out": len(l1_issues),
+                **l2_metrics,
+            }
+            LOGGER.info("Consolidation metrics: %s", metrics)
 
-            unique_issues = self._consolidate_findings(issues)
-
-            LOGGER.info("After consolidation: %d unique issues", len(unique_issues))
+            incomplete = self._build_incomplete(failed_batches, expert_metadata)
 
             mcp_error = state.get("mcp_error")
+            error_message: str | None = None
             if mcp_error or scaned_files == 0:
                 status = "FAILED"
                 error_message = mcp_error or "No files scanned"
+            elif any(i.severity in ("CRITICAL", "HIGH") for i in final_issues):
+                status = "FAILED"
+            elif final_issues or incomplete:
+                status = "WARNING"
             else:
-                has_critical_or_high = any(
-                    issue.severity in ("CRITICAL", "HIGH")
-                    for issue in unique_issues
-                )
+                status = "COMPLETED"
 
-                if has_critical_or_high:
-                    status = "FAILED"
-                    error_message = None
-                elif unique_issues:
-                    status = "WARNING"
-                    error_message = None
-                else:
-                    status = "COMPLETED"
-                    error_message = None
-
-            # Build final output
             result: dict[str, Any] = {
                 "status": status,
                 "scaned_files": scaned_files,
-                "issues": [issue.to_dict() for issue in unique_issues],
+                "issues": [issue.to_dict() for issue in final_issues],
             }
             if error_message:
                 result["error"] = error_message
+            if incomplete:
+                result["incomplete"] = incomplete
 
             LOGGER.info(
-                "Final result: status=%s, files=%d, issues=%d",
+                "Final result: status=%s, files=%d, issues=%d, incomplete=%s",
                 status,
                 scaned_files,
-                len(unique_issues),
+                len(final_issues),
+                bool(incomplete),
             )
-
-            # Return final state with consolidated issues so both
-            # final_output and state.issues survive the StateGraph schema
+            # `issues` is a reducer channel: writing it here would append, not
+            # replace. The consolidated list lives in final_output only.
             return {
                 "status": status,
                 "final_output": result,
-                "issues": unique_issues,
+                "expert_metadata": {"consolidation": metrics},
             }
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             LOGGER.exception("Merge node failed")
             return {
                 "status": "FAILED",
-                "scaned_files": state.get("scaned_files", 0),
-                "issues": [],
                 "error": str(e),
                 "final_output": {
                     "status": "FAILED",
                     "scaned_files": state.get("scaned_files", 0),
                     "issues": [],
+                    "error": str(e),
                 },
             }
 
-    def _consolidate_findings(
+    # ------------------------------------------------------------------
+    # Incomplete scans
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_incomplete(
+        failed_batches: list[dict[str, Any]],
+        expert_metadata: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not failed_batches:
+            return None
+        ordered = sorted(
+            failed_batches,
+            key=lambda fb: (
+                str(fb.get("expert", "")),
+                int(fb.get("batch_index", 0) or 0),
+            ),
+        )
+        total_batches = 0
+        for value in expert_metadata.values():
+            if isinstance(value, dict):
+                total_batches += int(value.get("batches", 0) or 0)
+                if value.get("batches", 0) == 0 and value.get("failed_batches"):
+                    total_batches += int(value.get("failed_batches", 0) or 0)
+        total_batches = max(total_batches, len(ordered))
+        paths = sorted({str(p) for fb in ordered for p in (fb.get("paths") or [])})
+        return {
+            "failed_batches": [
+                {
+                    "expert": fb.get("expert"),
+                    "batch_index": fb.get("batch_index"),
+                    "paths": sorted(str(p) for p in (fb.get("paths") or [])),
+                    "error": str(fb.get("error", "")),
+                }
+                for fb in ordered
+            ],
+            "files_not_fully_analyzed": paths,
+            "message": (
+                f"Análisis incompleto: {len(ordered)} de {total_batches} lotes "
+                f"fallaron; {len(paths)} archivos sin analizar completamente"
+            ),
+        }
+
+    # ------------------------------------------------------------------
+    # L2 consolidation
+    # ------------------------------------------------------------------
+
+    def _consolidate_l2(
         self,
         issues: list[ExpertIssue],
-    ) -> list[ExpertIssue]:
-        """Use the model to produce a final consolidated findings list."""
-        if self._model is None or len(issues) < 2:
+    ) -> tuple[list[ExpertIssue], dict[str, int]]:
+        metrics = {
+            "l2_in": len(issues),
+            "l2_out": 0,
+            "l2_groups": 0,
+            "l2_groups_rejected": 0,
+        }
+        if self._model is None:
+            metrics["l2_out"] = len(issues)
             LOGGER.info(
-                "Findings consolidation skipped: trace_version=%s reason=%s "
-                "original_count=%d original_findings=%s",
-                CONSOLIDATION_TRACE_VERSION,
-                "missing_model" if self._model is None else "not_enough_issues",
-                len(issues),
-                self._summarize_issues(issues),
-            )
-            return issues
-
-        findings = self._build_findings_payload(issues)
-        if len(findings) < 2:
-            LOGGER.info(
-                "Findings consolidation skipped: trace_version=%s "
-                "reason=not_enough_findings original_count=%d findings=%s",
+                "Findings consolidation skipped: trace_version=%s reason=missing_model "
+                "original_count=%d",
                 CONSOLIDATION_TRACE_VERSION,
                 len(issues),
-                self._summarize_findings(findings),
             )
-            return issues
+            return list(issues), metrics
 
+        groups: dict[str, list[ExpertIssue]] = {}
+        for issue in issues:
+            groups.setdefault(issue.path, []).append(issue)
+
+        output: list[ExpertIssue] = []
+        for path, group in groups.items():
+            if len(group) < 2:
+                output.extend(group)
+                continue
+            for start in range(0, len(group), _L2_MAX_FINDINGS_PER_CALL):
+                chunk = group[start : start + _L2_MAX_FINDINGS_PER_CALL]
+                if len(chunk) < 2:
+                    output.extend(chunk)
+                    continue
+                metrics["l2_groups"] += 1
+                consolidated, accepted = self._consolidate_group(path, chunk)
+                if not accepted:
+                    metrics["l2_groups_rejected"] += 1
+                output.extend(consolidated)
+
+        metrics["l2_out"] = len(output)
+        return output, metrics
+
+    def _consolidate_group(
+        self,
+        path: str,
+        group: list[ExpertIssue],
+    ) -> tuple[list[ExpertIssue], bool]:
+        """Return ``(issues, accepted)``; on any failure the L1 group is kept."""
+        findings = self._build_findings_payload(group)
         try:
-            return self._request_consolidated_issues(findings, issues)
-        except Exception as exc:
+            consolidated = self._request_consolidated_issues(findings, group)
+            return consolidated, True
+        except Exception as exc:  # noqa: BLE001
             LOGGER.warning(
-                "Findings consolidation failed; using original findings: "
-                "trace_version=%s error=%s original_count=%d original_findings=%s",
+                "Findings consolidation rejected for %s; keeping L1 findings: "
+                "trace_version=%s error=%s group_size=%d",
+                path,
                 CONSOLIDATION_TRACE_VERSION,
                 exc,
-                len(issues),
-                self._summarize_issues(issues),
+                len(group),
             )
-            return issues
+            return list(group), False
 
-    def _build_findings_payload(
-        self,
-        issues: list[ExpertIssue],
-    ) -> list[dict[str, Any]]:
-        """Serialize all expert findings for model-led consolidation."""
+    @staticmethod
+    def _build_findings_payload(issues: list[ExpertIssue]) -> list[dict[str, Any]]:
         findings = []
         for idx, issue in enumerate(issues):
-            finding = issue.to_dict()
+            finding = {name: getattr(issue, name) for name in _ISSUE_FIELDS}
             finding["id"] = idx
             findings.append(finding)
         return findings
@@ -168,15 +267,12 @@ class MergeFindingsNode:
     def _request_consolidated_issues(
         self,
         findings: list[dict[str, Any]],
-        original_issues: list[ExpertIssue],
+        group: list[ExpertIssue],
     ) -> list[ExpertIssue]:
         findings_json = json.dumps(findings, ensure_ascii=False, separators=(",", ":"))
         prompt_template = get_findings_consolidation_prompt()
         prompt_hash = self._hash_text(prompt_template)
-        prompt = prompt_template.replace(
-            "{{ findings_json }}",
-            findings_json,
-        )
+        prompt = prompt_template.replace("{{ findings_json }}", findings_json)
         LOGGER.info(
             "Findings consolidation request: trace_version=%s prompt_hash=%s "
             "findings_count=%d findings=%s",
@@ -233,19 +329,9 @@ class MergeFindingsNode:
                 len(repaired_content),
             )
         consolidated = data.get("issues", [])
-        if not isinstance(consolidated, list):
-            raise ValueError("Consolidation response issues must be a list")
-        if not consolidated:
-            LOGGER.warning(
-                "Findings consolidation returned no issues; using original findings: "
-                "trace_version=%s prompt_hash=%s original_count=%d",
-                CONSOLIDATION_TRACE_VERSION,
-                prompt_hash,
-                len(original_issues),
-            )
-            return original_issues
-        issues = [self._issue_from_consolidated_dict(issue) for issue in consolidated]
-        self._validate_consolidated_evidence(issues, findings)
+        if not isinstance(consolidated, list) or not consolidated:
+            raise ValueError("Consolidation response issues must be a non-empty list")
+        issues = self._validate_group(consolidated, group)
         LOGGER.info(
             "Findings consolidation accepted: trace_version=%s prompt_hash=%s "
             "input_count=%d output_count=%d output_findings=%s",
@@ -257,66 +343,97 @@ class MergeFindingsNode:
         )
         return issues
 
-    @staticmethod
-    def _issue_from_consolidated_dict(data: dict[str, Any]) -> ExpertIssue:
-        if not isinstance(data, dict):
-            raise ValueError("Consolidated issue must be an object")
-        required_fields = {
-            "title",
-            "description",
-            "severity",
-            "category",
-            "path",
-            "line",
-            "summary",
-            "code",
-            "recommendation",
-        }
-        missing = required_fields - set(data.keys())
-        if missing:
-            raise ValueError(f"Consolidated issue missing fields: {sorted(missing)}")
-        return ExpertIssue(
-            title=str(data["title"]),
-            description=str(data["description"]),
-            severity=str(data["severity"]),
-            category=str(data["category"]),
-            path=str(data["path"]),
-            line=int(data["line"]),
-            summary=str(data["summary"]),
-            code=str(data["code"]),
-            recommendation=str(data["recommendation"]),
-        )
-
-    def _validate_consolidated_evidence(
+    def _validate_group(
         self,
-        issues: list[ExpertIssue],
-        findings: list[dict[str, Any]],
-    ) -> None:
-        lines_by_path: dict[str, set[int]] = {}
-        codes_by_path: dict[str, set[str]] = {}
-        for finding in findings:
-            path = str(finding.get("path", ""))
-            line = int(finding.get("line", 0))
-            lines_by_path.setdefault(path, set()).add(line)
-            code = self._normalize_code(str(finding.get("code", "")))
-            if code:
-                codes_by_path.setdefault(path, set()).add(code)
+        consolidated: list[Any],
+        group: list[ExpertIssue],
+    ) -> list[ExpertIssue]:
+        """Accountability check: every input represented, nothing invented."""
+        expected_ids = set(range(len(group)))
+        seen_ids: list[int] = []
+        issues: list[ExpertIssue] = []
 
-        for issue in issues:
-            if issue.path not in lines_by_path:
-                raise ValueError(f"Consolidated issue invented path: {issue.path}")
-            if issue.line not in lines_by_path[issue.path]:
+        for item in consolidated:
+            if not isinstance(item, dict):
+                raise ValueError("Consolidated issue must be an object")
+            missing = set(_ISSUE_FIELDS) - set(item.keys())
+            if missing:
                 raise ValueError(
-                    f"Consolidated issue invented line: {issue.path}:{issue.line}"
+                    f"Consolidated issue missing fields: {sorted(missing)}"
                 )
-            code = self._normalize_code(issue.code)
-            allowed_codes = codes_by_path.get(issue.path, set())
-            if code and code not in allowed_codes:
+            source_ids = item.get("source_ids")
+            if not isinstance(source_ids, list) or not source_ids:
+                raise ValueError("Consolidated issue missing source_ids")
+            ids: list[int] = []
+            for raw in source_ids:
+                try:
+                    sid = int(raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Invalid source id: {raw!r}") from exc
+                if sid not in expected_ids:
+                    raise ValueError(f"Unknown source id: {sid}")
+                ids.append(sid)
+            seen_ids.extend(ids)
+            sources = [group[i] for i in ids]
+
+            severity = str(item["severity"]).upper()
+            if severity != max_severity([s.severity for s in sources]):
+                raise ValueError(
+                    "Consolidated issue severity must be the max of its sources"
+                )
+            if str(item["path"]) not in {s.path for s in sources}:
+                raise ValueError(f"Consolidated issue invented path: {item['path']}")
+            try:
+                line = int(item["line"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Consolidated issue line must be an integer") from exc
+            if line not in {s.line for s in sources}:
+                raise ValueError(
+                    f"Consolidated issue invented line: {item['path']}:{line}"
+                )
+            code = normalize_code(str(item["code"]))
+            if code not in {normalize_code(s.code) for s in sources}:
                 raise ValueError("Consolidated issue invented code evidence")
+
+            merged_from: set[str] = set()
+            for source in sources:
+                merged_from.update(
+                    str(n) for n in source.metadata.get("merged_from", [])
+                )
+                if source.metadata.get("expert"):
+                    merged_from.add(str(source.metadata["expert"]))
+            issues.append(
+                ExpertIssue(
+                    title=str(item["title"]),
+                    description=str(item["description"]),
+                    severity=severity,
+                    category=str(item["category"]),
+                    path=str(item["path"]),
+                    line=line,
+                    summary=str(item["summary"]),
+                    code=str(item["code"]),
+                    recommendation=str(item["recommendation"]),
+                    metadata={
+                        "merged_from": sorted(merged_from),
+                        "source_count": len(sources),
+                    },
+                )
+            )
+
+        if sorted(seen_ids) != sorted(expected_ids):
+            raise ValueError(
+                "source_ids must cover every input finding exactly once "
+                f"(expected {sorted(expected_ids)}, got {sorted(seen_ids)})"
+            )
+        return issues
+
+    # ------------------------------------------------------------------
+    # Response handling helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _normalize_code(code: str) -> str:
-        return " ".join((code or "").split())
+        return normalize_code(code)
 
     @staticmethod
     def _hash_text(text: str) -> str:
@@ -330,14 +447,13 @@ class MergeFindingsNode:
                 "severity": issue.severity,
                 "path": issue.path,
                 "line": issue.line,
-                "code_hash": self._hash_text(self._normalize_code(issue.code)),
+                "code_hash": self._hash_text(normalize_code(issue.code)),
             }
             for idx, issue in enumerate(issues)
         ]
 
     def _summarize_findings(
-        self,
-        findings: list[dict[str, Any]],
+        self, findings: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         return [
             {
@@ -347,7 +463,7 @@ class MergeFindingsNode:
                 "path": finding.get("path"),
                 "line": finding.get("line"),
                 "code_hash": self._hash_text(
-                    self._normalize_code(str(finding.get("code", "")))
+                    normalize_code(str(finding.get("code", "")))
                 ),
             }
             for finding in findings
@@ -477,7 +593,7 @@ class MergeFindingsNode:
             redacted = {}
             for key, value in content.items():
                 if str(key) == "code":
-                    code = self._normalize_code(str(value))
+                    code = normalize_code(str(value))
                     redacted[key] = {
                         "redacted": True,
                         "length": len(str(value)),
@@ -494,7 +610,7 @@ class MergeFindingsNode:
         def replace(match: re.Match[str]) -> str:
             prefix = match.group("prefix")
             value = match.group("value")
-            code = self._normalize_code(value)
+            code = normalize_code(value)
             return (
                 f'{prefix}{{"redacted":true,"length":{len(value)},'
                 f'"hash":"{self._hash_text(code)}"}}'

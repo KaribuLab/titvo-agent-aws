@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class AnalysisStatus(Enum):
@@ -30,3 +30,7 @@ class ResultDto:
     status: str
     scaned_files: int
     issues: list[IssueDto]
+    # Populated by the merge node when MCP retrieval fails.
+    error: Optional[str] = None
+    # Populated when one or more expert batches failed (see scan-completeness).
+    incomplete: Optional[Dict[str, Any]] = None

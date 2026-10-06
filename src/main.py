@@ -29,6 +29,9 @@ from code_analysis.infra.adapters.langchain_agent_adapter import (
     AsyncMCPToolsFactory,
     LangchainAgentModelFactory,
 )
+from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
+    ExpertRuntimeConfig,
+)
 from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
     RagRetrievalNode,
 )
@@ -124,6 +127,8 @@ async def create_langgraph_agent(
             }
         ),
     )
+    expert_config = ExpertRuntimeConfig.from_env()
+    LOGGER.info("Expert runtime config: %s", expert_config.to_dict())
     agent = LangGraphAgent(
         system_prompt=system_prompt,
         model_factory=model_factory,
@@ -131,6 +136,7 @@ async def create_langgraph_agent(
         langfuse_callback_handler=langfuse_handler,
         langfuse_metadata=langfuse_metadata,
         rag_node=rag_node,
+        expert_config=expert_config,
     )
     return agent, content_template
 

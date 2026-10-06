@@ -12,7 +12,7 @@ import logging
 from typing import Any
 
 from code_analysis.domain.ports.rag_context_port import IRagContextPort
-from code_analysis.infra.adapters.langgraph.nodes._structural_lines import (
+from code_analysis.domain.services.structural_lines import (
     extract_structural_lines,
 )
 from code_analysis.infra.adapters.langgraph.state import AgentState

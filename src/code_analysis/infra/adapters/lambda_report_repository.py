@@ -27,6 +27,8 @@ class LambdaReportRepository(IReportRepository):
                 for issue in result_dto.issues
             ],
         }
+        if result_dto.incomplete:
+            input_payload["incomplete"] = result_dto.incomplete
         response = self.lambda_client.invoke(
             FunctionName=self.function_name,
             Payload=dumps_lambda_payload(input_payload),

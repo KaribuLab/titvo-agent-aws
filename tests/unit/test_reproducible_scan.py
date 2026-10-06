@@ -13,6 +13,7 @@ to commit size) are covered separately by test_langchain_agent_adapter.py
 and test_base_expert_node.py.
 """
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -38,9 +39,16 @@ _CONSOLIDATED_RESPONSE = json.dumps({"issues": [_ISSUE]})
 
 class _CannedModel:
     """Deterministic model double: always answers the same way, regardless
-    of which expert prompt it was called with."""
+    of which expert prompt it was called with — but completes in a different
+    order every run, so the fan-out's aggregation must not depend on timing."""
+
+    def __init__(self) -> None:
+        self._calls = 0
 
     async def ainvoke(self, messages):
+        self._calls += 1
+        # Pseudo-random latency per call: experts/batches finish out of order.
+        await asyncio.sleep(((self._calls * 7919) % 5) / 1000)
         return SimpleNamespace(content=_EXPERT_RESPONSE)
 
     def invoke(self, messages):
@@ -107,7 +115,9 @@ class TestReproducibleScan:
 
         assert outputs[0]["status"] == "FAILED"  # HIGH severity issue present
         assert outputs[0]["scaned_files"] == 2
+        # Six experts report the same evidence; L1 collapses them into one.
         assert len(outputs[0]["issues"]) == 1
+        assert "incomplete" not in outputs[0]
 
         for output in outputs[1:]:
             assert output == outputs[0]

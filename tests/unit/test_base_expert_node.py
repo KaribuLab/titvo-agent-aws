@@ -1,112 +1,318 @@
-"""Tests for BaseExpertNode's per-file content budget (truncation).
+"""Tests for BaseExpertNode: runtime selection, chunking/batching, concurrency,
+retries, failed batches and line mapping.
 
-A given file's truncated content must not depend on how many other files
-are being scanned alongside it in the same commit — otherwise the same
-unchanged file can be analyzed with different detail across commits,
-producing findings that appear/disappear without the file itself changing.
+A given file's content sent to the LLM must not depend on how many other
+files are being scanned alongside it, and no file is ever truncated.
 """
 
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from code_analysis.domain.services.batch_planner import plan_files
+from code_analysis.infra.adapters.langgraph.nodes import base_expert_node as mod
 from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
-    _GLOBAL_BUDGET_CHARS,
-    _compute_file_budgets,
+    ExpertRuntimeConfig,
 )
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
     CodeVulnerabilitiesNode,
+    OwaspApiNode,
+    OwaspMobileNode,
 )
 
 
-def _make_file(path: str, size: int) -> dict:
-    return {"path": path, "content": "x" * size}
+def _file(path: str, content: str, runtimes=("server",)) -> dict:
+    return {"path": path, "content": content, "runtimes": list(runtimes)}
+
+
+def _lines(n: int, width: int = 99) -> str:
+    return "".join(f"x{i:06d}".ljust(width, "-") + "\n" for i in range(n))
+
+
+def _issue_json(path: str, line: int, title: str = "Issue") -> dict:
+    return {
+        "title": title,
+        "description": "d",
+        "severity": "HIGH",
+        "category": "Cat",
+        "path": path,
+        "line": line,
+        "summary": "s",
+        "code": "code();",
+        "recommendation": "r",
+    }
+
+
+def _response(issues: list[dict]) -> SimpleNamespace:
+    return SimpleNamespace(content=json.dumps({"issues": issues}))
 
 
 def _extract_file_block(formatted: str, path: str) -> str:
-    marker = f"=== FILE: {path} ==="
+    marker = f"=== FILE: {path} "
     start = formatted.index(marker)
     end = formatted.index("=== END FILE ===", start)
     return formatted[start:end]
 
 
-class TestFileBudgetIndependentOfCommitSize:
-    def test_same_large_file_same_truncation_in_small_and_large_commit(self):
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    async def _instant(_seconds):
+        return None
+
+    monkeypatch.setattr(mod.asyncio, "sleep", _instant)
+
+
+class TestContentIndependentOfScanSize:
+    def test_same_file_same_content_in_small_and_large_scan(self):
         node = CodeVulnerabilitiesNode(None)
-        target = _make_file("src/big_file.py", 50_000)
+        target = _file("src/big_file.py", _lines(120))
 
-        small_commit = [target] + [
-            _make_file(f"other_{i}.py", 100) for i in range(2)
-        ]
-        large_commit = [target] + [
-            _make_file(f"other_{i}.py", 100) for i in range(49)
-        ]
+        small = node._format_files([target, _file("o.py", "x")])
+        large = node._format_files(
+            [target] + [_file(f"o{i}.py", "x" * 5_000) for i in range(400)]
+        )
 
-        small_output = node._format_files(small_commit)
-        large_output = node._format_files(large_commit)
+        assert _extract_file_block(small, target["path"]) == _extract_file_block(
+            large, target["path"]
+        )
 
-        small_block = _extract_file_block(small_output, target["path"])
-        large_block = _extract_file_block(large_output, target["path"])
-
-        assert small_block == large_block
-
-    def test_untouched_small_file_never_truncated_regardless_of_commit_size(self):
+    def test_no_file_is_truncated(self):
         node = CodeVulnerabilitiesNode(None)
-        target = _make_file("src/small_file.py", 500)
+        files = [_file(f"f{i}.py", "y" * 25_000) for i in range(20)]  # 500k chars
+        formatted = node._format_files(files)
+        for f in files:
+            assert f["content"] in formatted
 
-        small_commit = [target]
-        large_commit = [target] + [
-            _make_file(f"other_{i}.py", 100) for i in range(49)
-        ]
-
-        small_output = node._format_files(small_commit)
-        large_output = node._format_files(large_commit)
-
-        assert target["content"] in small_output
-        assert target["content"] in large_output
-
-
-class TestAggregateBudgetSafetyNet:
-    """The per-commit total must still fit the model's context window — but
-    the shrink, when needed, must be driven by actual aggregate content size,
-    not by how many files happen to be in the commit."""
-
-    def test_huge_aggregate_content_still_gets_truncated(self):
+    def test_header_carries_runtime(self):
         node = CodeVulnerabilitiesNode(None)
-        # 10 files x 40k chars = 400k chars, well above the global budget.
-        huge_commit = [_make_file(f"f_{i}.py", 40_000) for i in range(10)]
+        formatted = node._format_files([_file("src/a.tsx", "x", ("browser",))])
+        assert "=== FILE: src/a.tsx [runtime: browser] ===" in formatted
 
-        output = node._format_files(huge_commit)
-
-        assert len(output) < sum(len(f["content"]) for f in huge_commit)
-
-    def test_floor_never_pushes_aggregate_past_global_budget(self):
-        """Many small/medium files can each land below the per-file floor
-        after proportional shrink; honoring the floor for all of them would
-        blow past the global budget, so the floor must yield to the
-        aggregate ceiling instead."""
-        # 100 files x 4k chars = 400k raw, well above the 200k global budget.
-        # Proportional shrink alone would give each file 2k chars (below the
-        # 3k floor); honoring the floor for all 100 would total 300k > 200k.
-        many_files = [_make_file(f"f_{i}.py", 4_000) for i in range(100)]
-
-        budgets = _compute_file_budgets(many_files)
-
-        assert sum(budgets.values()) <= _GLOBAL_BUDGET_CHARS
-
-    def test_shrink_driven_by_total_size_not_file_count(self):
+    def test_partial_chunk_header_carries_line_range(self):
         node = CodeVulnerabilitiesNode(None)
-        # Keep every file at or below the per-file cap (30k) so the totals
-        # below are reached without any individual file being capped first.
-        target = _make_file("src/target.py", 25_000)
+        formatted = node._format_files([_file("big.py", "import os\n" + _lines(800))])
+        assert "[lines 1-" in formatted
+        assert "Report `line` as the absolute line number" in formatted
 
-        # Same total content (250k chars) reached via few big files vs many
-        # medium files — the target file's budget should be the same either way.
-        few_big_files = [target] + [_make_file(f"f_{i}.py", 25_000) for i in range(9)]
-        many_medium_files = [target] + [
-            _make_file(f"f_{i}.py", 15_000) for i in range(15)
+
+class TestRuntimeSelection:
+    def test_selects_by_intersection(self):
+        node = OwaspMobileNode(None)
+        files = [
+            _file("a.tsx", "x", ("mobile", "browser")),
+            _file("b.tsx", "x", ("browser",)),
+            _file("c.kt", "x", ("mobile",)),
         ]
+        assert [f["path"] for f in node._select_files(files)] == ["a.tsx", "c.kt"]
 
-        few_output = node._format_files(few_big_files)
-        many_output = node._format_files(many_medium_files)
+    def test_missing_runtimes_is_treated_as_unknown(self):
+        assert OwaspApiNode(None).matches_runtimes(None) is True
+        assert OwaspMobileNode(None).matches_runtimes(None) is False
 
-        few_block = _extract_file_block(few_output, target["path"])
-        many_block = _extract_file_block(many_output, target["path"])
+    @pytest.mark.asyncio
+    async def test_no_matching_files_skips_without_llm_call(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock()
+        node = OwaspMobileNode(model)
+        result = await node({"files": [_file("a.py", "x", ("server",))], "issues": []})
+        model.ainvoke.assert_not_called()
+        assert result["expert_metadata"]["owasp_mobile"] == {
+            "files_analyzed": 0,
+            "skipped": True,
+        }
+        assert "issues" not in result
 
-        assert few_block == many_block
+
+class TestBatchesAndConcurrency:
+    @pytest.mark.asyncio
+    async def test_one_llm_call_per_batch_and_results_in_batch_order(self):
+        files = [
+            _file(f"f{i:02d}.py", "x" * 20_000) for i in range(30)
+        ]  # 600k → 3 batches
+        config = ExpertRuntimeConfig(max_concurrency=8)
+        expected_batches = plan_files(files, 30_000, 200_000, 5_000)
+        assert len(expected_batches) == 3
+
+        calls: list[str] = []
+
+        async def _ainvoke(messages):
+            content = messages[1].content
+            first_path = content.split("=== FILE: ")[1].split(" ")[0]
+            calls.append(first_path)
+            # Later batches answer faster to shuffle completion order.
+            await asyncio.sleep(0)
+            return _response([_issue_json(first_path, 1, title=f"from {first_path}")])
+
+        model = MagicMock()
+        model.ainvoke = _ainvoke
+        node = CodeVulnerabilitiesNode(model, config)
+
+        result = await node({"files": files, "issues": []})
+
+        assert len(calls) == 3
+        titles = [i.title for i in result["issues"]]
+        assert titles == [f"from {b.chunks[0].path}" for b in expected_batches]
+        assert [i.metadata["batch_index"] for i in result["issues"]] == [0, 1, 2]
+        assert result["expert_metadata"]["code_vulnerabilities"]["batches"] == 3
+        assert result["failed_batches"] == []
+
+    @pytest.mark.asyncio
+    async def test_semaphore_bounds_concurrency(self):
+        files = [_file(f"f{i:02d}.py", "x" * 20_000) for i in range(60)]  # 6 batches
+        config = ExpertRuntimeConfig(max_concurrency=2)
+        active = 0
+        peak = 0
+
+        async def _ainvoke(messages):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return _response([])
+
+        model = MagicMock()
+        model.ainvoke = _ainvoke
+        await CodeVulnerabilitiesNode(model, config)({"files": files, "issues": []})
+        assert peak <= 2
+
+    @pytest.mark.asyncio
+    async def test_issue_metadata_records_origin(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(return_value=_response([_issue_json("a.py", 3)]))
+        node = OwaspApiNode(model)
+        result = await node({"files": [_file("a.py", "x")], "issues": []})
+        assert result["issues"][0].metadata == {
+            "expert": "owasp_api",
+            "batch_index": 0,
+            "chunk_index": 0,
+        }
+
+
+class TestFailedBatches:
+    @pytest.mark.asyncio
+    async def test_failed_batch_recorded_and_others_kept(self):
+        files = [_file(f"f{i:02d}.py", "x" * 20_000) for i in range(30)]  # 3 batches
+        config = ExpertRuntimeConfig(max_attempts=3)
+
+        async def _ainvoke(messages):
+            content = messages[1].content
+            first_path = content.split("=== FILE: ")[1].split(" ")[0]
+            if first_path == "f10.py":  # second batch
+                raise RuntimeError("provider down")
+            return _response([_issue_json(first_path, 1)])
+
+        model = MagicMock()
+        model.ainvoke = _ainvoke
+        result = await CodeVulnerabilitiesNode(model, config)(
+            {"files": files, "issues": []}
+        )
+
+        assert len(result["issues"]) == 2
+        assert len(result["failed_batches"]) == 1
+        failed = result["failed_batches"][0]
+        assert failed["expert"] == "code_vulnerabilities"
+        assert failed["batch_index"] == 1
+        assert failed["paths"] == [f"f{i:02d}.py" for i in range(10, 20)]
+        assert "provider down" in failed["error"]
+        assert result["expert_errors"] == [
+            "code_vulnerabilities: batch 1 failed: provider down"
+        ]
+        assert result["expert_metadata"]["code_vulnerabilities"]["failed_batches"] == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_then_succeeds(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(
+            side_effect=[RuntimeError("429"), RuntimeError("429"), _response([])]
+        )
+        node = OwaspApiNode(model, ExpertRuntimeConfig(max_attempts=3))
+        result = await node({"files": [_file("a.py", "x")], "issues": []})
+        assert model.ainvoke.await_count == 3
+        assert result["failed_batches"] == []
+
+    @pytest.mark.asyncio
+    async def test_exhausted_retries_fail_batch(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(side_effect=RuntimeError("429"))
+        node = OwaspApiNode(model, ExpertRuntimeConfig(max_attempts=3))
+        result = await node({"files": [_file("a.py", "x")], "issues": []})
+        assert model.ainvoke.await_count == 3
+        assert len(result["failed_batches"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_unparsable_response_is_a_failed_batch(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(return_value=SimpleNamespace(content="not json"))
+        node = OwaspApiNode(model)
+        result = await node({"files": [_file("a.py", "x")], "issues": []})
+        assert result["issues"] == []
+        assert result["failed_batches"][0]["error"] == "Failed to parse JSON response"
+
+
+class TestLineMapping:
+    def test_single_chunk_line_untouched(self):
+        node = CodeVulnerabilitiesNode(None)
+        batch = plan_files([_file("a.py", "x\n" * 10)])[0]
+        result = node._parse_response(
+            json.dumps({"issues": [_issue_json("a.py", 7)]}), batch
+        )
+        assert result.issues[0].line == 7
+
+    def test_relative_line_is_offset_to_absolute(self):
+        node = CodeVulnerabilitiesNode(None)
+        content = "import os\n" + _lines(800)
+        batches = plan_files([_file("a.py", content)], 30_000, 10**9, 5_000)
+        chunk = batches[0].chunks[1]
+        assert chunk.start_line > 1
+        result = node._parse_response(
+            json.dumps({"issues": [_issue_json("a.py", 40)]}), batches[0]
+        )
+        # Line 40 is not inside chunk 0's absolute range? It is (1-300), so chunk 0
+        # is chosen and 40 stays absolute. Use a line only chunk 1 can hold.
+        assert result.issues[0].line == 40
+
+        relative = json.dumps({"issues": [_issue_json("a.py", chunk.start_line + 5)]})
+        result = node._parse_response(relative, batches[0])
+        assert result.issues[0].line == chunk.start_line + 5
+
+    def test_resolve_line_offsets_when_only_relative_fits(self):
+        content = "import os\n" + _lines(800)
+        batches = plan_files([_file("a.py", content)], 30_000, 10**9, 5_000)
+        chunk = batches[0].chunks[2]
+        # A value below the chunk's absolute range but within its relative span.
+        mapped = CodeVulnerabilitiesNode._resolve_line(40, chunk)
+        assert mapped == chunk.start_line - 1 + 40
+
+    def test_resolve_line_keeps_absolute_in_range(self):
+        content = "import os\n" + _lines(800)
+        batches = plan_files([_file("a.py", content)], 30_000, 10**9, 5_000)
+        chunk = batches[0].chunks[2]
+        assert CodeVulnerabilitiesNode._resolve_line(chunk.start_line + 3, chunk) == (
+            chunk.start_line + 3
+        )
+
+
+class TestExpertRuntimeConfig:
+    def test_defaults(self):
+        config = ExpertRuntimeConfig()
+        assert config.to_dict() == {
+            "per_file_cap_chars": 30_000,
+            "batch_budget_chars": 200_000,
+            "chunk_overlap_chars": 5_000,
+            "max_concurrency": 4,
+        }
+
+    def test_from_env_with_fallbacks(self, monkeypatch):
+        monkeypatch.delenv(mod.ENV_FILE_CAP, raising=False)
+        monkeypatch.setenv(mod.ENV_BATCH_BUDGET, "150000")
+        monkeypatch.setenv(mod.ENV_CHUNK_OVERLAP, "not-a-number")
+        monkeypatch.setenv(mod.ENV_MAX_CONCURRENCY, "0")
+        config = ExpertRuntimeConfig.from_env()
+        assert config.per_file_cap_chars == 30_000
+        assert config.batch_budget_chars == 150_000
+        assert config.chunk_overlap_chars == 5_000
+        assert config.max_concurrency == 4

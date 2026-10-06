@@ -3,6 +3,7 @@
 import pytest
 
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
+    EXPERT_RUNTIMES,
     CodeVulnerabilitiesNode,
     DevSecOpsNode,
     OwaspApiNode,
@@ -13,148 +14,53 @@ from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
 )
 
 
-class TestPromptHardeningNode:
-    """Tests for Prompt Hardening expert."""
+class TestExpertRuntimes:
+    """Experts select files by runtime intersection; no name patterns."""
 
-    @pytest.fixture
-    def node(self):
-        return PromptHardeningNode(None)
+    def test_prompt_hardening_and_code_vulns_see_everything(self):
+        for node in (PromptHardeningNode(None), CodeVulnerabilitiesNode(None)):
+            assert node.get_runtimes() == {
+                "browser",
+                "server",
+                "mobile",
+                "infra",
+                "test",
+                "config",
+                "unknown",
+            }
 
-    def test_expert_name(self, node):
-        assert node.expert_name == "prompt_hardening"
+    def test_owasp_api_runtimes_include_browser_clients(self):
+        assert OwaspApiNode(None).get_runtimes() == {
+            "server",
+            "browser",
+            "unknown",
+            "config",
+        }
 
-    def test_analyzes_all_files(self, node):
-        """Prompt hardening should analyze all files."""
-        assert node.get_file_patterns() == []
-        assert node.should_analyze_file("any/file.py")
-        assert node.should_analyze_file("test.js")
+    def test_owasp_web_runtimes(self):
+        assert OwaspWebNode(None).get_runtimes() == {"browser", "server", "unknown"}
 
+    def test_owasp_mobile_runtimes(self):
+        assert OwaspMobileNode(None).get_runtimes() == {"mobile"}
 
-class TestOwaspApiNode:
-    """Tests for OWASP API expert."""
+    def test_devsecops_runtimes_include_tests(self):
+        assert DevSecOpsNode(None).get_runtimes() == {"infra", "config", "test"}
 
-    @pytest.fixture
-    def node(self):
-        return OwaspApiNode(None)
+    def test_registry_matches_nodes(self):
+        for node in create_expert_nodes(None):
+            assert EXPERT_RUNTIMES[node.expert_name] == node.get_runtimes()
 
-    def test_expert_name(self, node):
-        assert node.expert_name == "owasp_api"
-
-    def test_api_file_patterns(self, node):
-        patterns = node.get_file_patterns()
-        assert "*route*" in patterns
-        assert "*api*" in patterns
-        assert "*controller*" in patterns
-
-    def test_matches_api_files(self, node):
-        assert node.should_analyze_file("src/routes/users.py")
-        assert node.should_analyze_file("api/endpoints.py")
-        assert node.should_analyze_file("controllers/auth.py")
-        assert node.should_analyze_file("openapi.yaml")
-
-    def test_skips_non_api_files(self, node):
-        """Should not match non-API files."""
-        assert not node.should_analyze_file("tests/test_utils.py")
-
-
-class TestOwaspWebNode:
-    """Tests for OWASP Web expert."""
-
-    @pytest.fixture
-    def node(self):
-        return OwaspWebNode(None)
-
-    def test_expert_name(self, node):
-        assert node.expert_name == "owasp_web"
-
-    def test_web_file_patterns(self, node):
-        patterns = node.get_file_patterns()
-        assert "*.html" in patterns
-        assert "*.js" in patterns
-        assert "*template*" in patterns
-
-    def test_matches_web_files(self, node):
-        assert node.should_analyze_file("index.html")
-        assert node.should_analyze_file("app.js")
-        assert node.should_analyze_file("templates/base.html")
-
-
-class TestDevSecOpsNode:
-    """Tests for DevSecOps expert."""
-
-    @pytest.fixture
-    def node(self):
-        return DevSecOpsNode(None)
-
-    def test_expert_name(self, node):
-        assert node.expert_name == "devsecops"
-
-    def test_devops_file_patterns(self, node):
-        patterns = node.get_file_patterns()
-        assert "*.yml" in patterns
-        assert "Dockerfile*" in patterns
-        assert "*.tf" in patterns
-        assert ".github/**" in patterns
-
-    def test_matches_ci_files(self, node):
-        assert node.should_analyze_file(".github/workflows/ci.yml")
-        assert node.should_analyze_file("Dockerfile")
-        assert node.should_analyze_file("main.tf")
-
-
-class TestOwaspMobileNode:
-    """Tests for OWASP Mobile expert."""
-
-    @pytest.fixture
-    def node(self):
-        return OwaspMobileNode(None)
-
-    def test_expert_name(self, node):
-        assert node.expert_name == "owasp_mobile"
-
-    def test_mobile_file_patterns(self, node):
-        patterns = node.get_file_patterns()
-        assert "*AndroidManifest.xml" in patterns
-        assert "*Info.plist" in patterns
-        assert "*.dart" in patterns
-        assert "*.tsx" in patterns
-
-    def test_matches_android_files(self, node):
-        assert node.should_analyze_file("android/app/src/main/AndroidManifest.xml")
-        assert node.should_analyze_file(
-            "app/src/main/res/xml/network_security_config.xml"
-        )
-        assert node.should_analyze_file("android/app/build.gradle")
-        assert node.should_analyze_file("app/src/main/java/com/example/Auth.kt")
-
-    def test_matches_ios_files(self, node):
-        assert node.should_analyze_file("ios/App/Info.plist")
-        assert node.should_analyze_file("ios/App/App.entitlements")
-        assert node.should_analyze_file("ios/App/AuthStore.swift")
-        assert node.should_analyze_file("ios/Podfile")
-
-    def test_matches_cross_platform_mobile_files(self, node):
-        assert node.should_analyze_file("pubspec.yaml")
-        assert node.should_analyze_file("lib/main.dart")
-        assert node.should_analyze_file("app.json")
-        assert node.should_analyze_file("src/screens/Login.tsx")
-
-
-class TestCodeVulnerabilitiesNode:
-    """Tests for Code Vulnerabilities expert."""
-
-    @pytest.fixture
-    def node(self):
-        return CodeVulnerabilitiesNode(None)
-
-    def test_expert_name(self, node):
-        assert node.expert_name == "code_vulnerabilities"
-
-    def test_analyzes_all_files(self, node):
-        """Code vulns expert should analyze all files."""
-        assert node.get_file_patterns() == []
-        assert node.should_analyze_file("src/app.py")
-        assert node.should_analyze_file("lib/utils.js")
+    def test_expert_names(self):
+        names = {
+            PromptHardeningNode: "prompt_hardening",
+            OwaspApiNode: "owasp_api",
+            OwaspWebNode: "owasp_web",
+            OwaspMobileNode: "owasp_mobile",
+            DevSecOpsNode: "devsecops",
+            CodeVulnerabilitiesNode: "code_vulnerabilities",
+        }
+        for cls, name in names.items():
+            assert cls(None).expert_name == name
 
 
 class TestCreateExpertNodes:
@@ -163,19 +69,7 @@ class TestCreateExpertNodes:
     def test_creates_all_experts(self):
         nodes = create_expert_nodes(None)
         assert len(nodes) == 6
-
-        names = [n.expert_name for n in nodes]
-        assert "prompt_hardening" in names
-        assert "owasp_api" in names
-        assert "owasp_web" in names
-        assert "owasp_mobile" in names
-        assert "devsecops" in names
-        assert "code_vulnerabilities" in names
-
-    def test_expert_order(self):
-        nodes = create_expert_nodes(None)
-        names = [n.expert_name for n in nodes]
-        assert names == [
+        assert [n.expert_name for n in nodes] == [
             "prompt_hardening",
             "owasp_api",
             "owasp_web",
@@ -184,51 +78,77 @@ class TestCreateExpertNodes:
             "code_vulnerabilities",
         ]
 
+    def test_nodes_share_config(self):
+        nodes = create_expert_nodes(None)
+        configs = {id(n._config) for n in nodes}
+        assert len(configs) == 1
 
-class TestFileFiltering:
-    """Tests for file filtering logic."""
+
+class TestFileSelection:
+    """Selection by runtime intersection without fallback."""
 
     @pytest.fixture
     def sample_files(self):
         return [
-            {"path": "src/routes/api.py", "content": "code"},
-            {"path": "templates/index.html", "content": "html"},
-            {"path": ".github/workflows/ci.yml", "content": "yaml"},
-            {"path": "src/utils.py", "content": "python"},
+            {"path": "src/routes/api.py", "content": "code", "runtimes": ["server"]},
+            {
+                "path": "templates/index.html",
+                "content": "html",
+                "runtimes": ["browser"],
+            },
+            {
+                "path": ".github/workflows/ci.yml",
+                "content": "yaml",
+                "runtimes": ["infra"],
+            },
+            {"path": "src/utils.py", "content": "python", "runtimes": ["server"]},
+            {
+                "path": "src/services/apiClient.ts",
+                "content": "fetch()",
+                "runtimes": ["browser"],
+            },
+            {"path": "tests/test_x.py", "content": "t", "runtimes": ["test"]},
         ]
 
-    def test_devsecops_filters_ci_files(self, sample_files):
-        node = DevSecOpsNode(None)
-        filtered = node._filter_files(sample_files)
+    def test_devsecops_selects_infra_and_tests(self, sample_files):
+        paths = [f["path"] for f in DevSecOpsNode(None)._select_files(sample_files)]
+        assert paths == [".github/workflows/ci.yml", "tests/test_x.py"]
 
-        # Should include .github/workflows/ci.yml
-        paths = [f["path"] for f in filtered]
-        assert ".github/workflows/ci.yml" in paths
-
-    def test_owasp_api_filters_route_files(self, sample_files):
-        node = OwaspApiNode(None)
-        filtered = node._filter_files(sample_files)
-
-        paths = [f["path"] for f in filtered]
+    def test_owasp_api_selects_server_and_browser_clients(self, sample_files):
+        paths = [f["path"] for f in OwaspApiNode(None)._select_files(sample_files)]
         assert "src/routes/api.py" in paths
+        assert "src/services/apiClient.ts" in paths
+        assert ".github/workflows/ci.yml" not in paths
 
-    def test_fallback_when_no_matches(self, sample_files):
-        """When no files match patterns, should return all files."""
-        class NoMatchNode(OwaspApiNode):
-            def get_file_patterns(self) -> list[str]:
-                return ["*nonexistent*"]
-
-        node = NoMatchNode(None)
-
-        filtered = node._filter_files(
-            [
-                {"path": "file1.txt", "content": ""},
-                {"path": "file2.txt", "content": ""},
+    def test_frontend_client_reaches_owasp_api_in_commit_and_full(self, sample_files):
+        client = [f for f in sample_files if f["path"].endswith("apiClient.ts")]
+        commit_scan = OwaspApiNode(None)._select_files(client)
+        full_scan = OwaspApiNode(None)._select_files(
+            client
+            + [
+                {"path": f"srv/{i}.py", "content": "x", "runtimes": ["server"]}
+                for i in range(200)
             ]
         )
+        assert [f["path"] for f in commit_scan] == ["src/services/apiClient.ts"]
+        assert "src/services/apiClient.ts" in [f["path"] for f in full_scan]
 
-        # Fallback: all files returned
-        assert len(filtered) == 2
+    def test_multi_runtime_file_reaches_every_matching_expert(self):
+        f = {"path": "a.tsx", "content": "x", "runtimes": ["mobile", "browser"]}
+        assert OwaspMobileNode(None)._select_files([f]) == [f]
+        assert OwaspWebNode(None)._select_files([f]) == [f]
+        assert DevSecOpsNode(None)._select_files([f]) == []
+
+    def test_no_fallback_when_nothing_matches(self):
+        files = [
+            {"path": "file1.py", "content": "", "runtimes": ["server"]},
+            {"path": "file2.py", "content": "", "runtimes": ["server"]},
+        ]
+        assert OwaspMobileNode(None)._select_files(files) == []
+
+    def test_web_tsx_not_sent_to_mobile(self):
+        f = {"path": "src/App.tsx", "content": "x", "runtimes": ["browser"]}
+        assert OwaspMobileNode(None)._select_files([f]) == []
 
 
 class TestBaseExpertNodeFormatRagChunks:
@@ -276,51 +196,6 @@ class TestBaseExpertNodeFormatRagChunks:
         assert "orphan code" in result
 
 
-class TestSmartTruncate:
-    """Tests for BaseExpertNode._smart_truncate()."""
-
-    @pytest.fixture
-    def node(self):
-        return PromptHardeningNode(None)
-
-    def test_short_content_not_truncated(self, node):
-        """Content under the limit should be returned unchanged."""
-        content = "import os\ndef foo(): pass\n"
-        result, truncated = node._smart_truncate(content, max_chars=1000)
-        assert result == content
-        assert truncated is False
-
-    def test_truncated_flag_set_for_large_content(self, node):
-        """Content exceeding the limit should set truncated=True."""
-        content = "x" * 10_000
-        _, truncated = node._smart_truncate(content, max_chars=100)
-        assert truncated is True
-
-    def test_result_within_budget(self, node):
-        """Result length should not exceed max_chars."""
-        content = ("import os\n" * 50) + ("x = 1\n" * 500)
-        max_chars = 200
-        result, _ = node._smart_truncate(content, max_chars=max_chars)
-        assert len(result) <= max_chars + 200  # small overshoot allowed for separator
-
-    def test_structural_lines_preserved_after_cut(self, node):
-        """Structural lines from the tail portion should appear in the result."""
-        head_filler = "x = 1\n" * 200  # non-structural → forms the head
-        tail_struct = "def secret_func(): pass\n"
-        content = head_filler + tail_struct
-        result, truncated = node._smart_truncate(content, max_chars=500)
-        assert truncated is True
-        assert "def secret_func" in result
-
-    def test_non_structural_tail_not_included(self, node):
-        """Non-structural lines in the tail should be omitted when budget is tight."""
-        head = "import os\n" * 5
-        tail = "this_is_not_structural = 'hidden'\n" * 100
-        content = head + tail
-        result, truncated = node._smart_truncate(content, max_chars=len(head) + 10)
-        assert "this_is_not_structural" not in result or truncated
-
-
 class TestBuildFileQuery:
     """Tests for RagRetrievalNode._build_file_query()."""
 
@@ -352,7 +227,7 @@ class TestStructuralLines:
     """Tests for _structural_lines.is_structural across languages."""
 
     def _check(self, line: str, expected: bool = True):
-        from code_analysis.infra.adapters.langgraph.nodes._structural_lines import (
+        from code_analysis.domain.services.structural_lines import (
             is_structural,
         )
 

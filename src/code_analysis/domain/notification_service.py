@@ -57,6 +57,8 @@ class NotificationService:
                 args=result_dto.args,
                 commit_hash=result_dto.commit_hash,
                 scaned_files=result_dto.scaned_files,
+                error=result_dto.error,
+                incomplete=result_dto.incomplete,
             )
         )
         LOGGER.info("Report result: %s", report_result)

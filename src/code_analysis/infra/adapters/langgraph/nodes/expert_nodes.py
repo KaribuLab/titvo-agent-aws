@@ -1,10 +1,42 @@
-"""Concrete expert node implementations for LangGraph workflow."""
+"""Concrete expert node implementations for LangGraph workflow.
+
+Experts select files by runtime (see ``runtime_classifier``), never by file
+name patterns, and there is no fallback to "all files": an expert with no
+matching files is skipped.
+"""
 
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from code_analysis.domain.services.runtime_classifier import Runtime
 from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
+    ALL_RUNTIME_VALUES,
     BaseExpertNode,
+    ExpertRuntimeConfig,
 )
+
+_ALL = set(ALL_RUNTIME_VALUES)
+
+EXPERT_RUNTIMES: dict[str, set[str]] = {
+    "prompt_hardening": set(_ALL),
+    "owasp_api": {
+        Runtime.SERVER.value,
+        Runtime.BROWSER.value,
+        Runtime.UNKNOWN.value,
+        Runtime.CONFIG.value,
+    },
+    "owasp_web": {
+        Runtime.BROWSER.value,
+        Runtime.SERVER.value,
+        Runtime.UNKNOWN.value,
+    },
+    "owasp_mobile": {Runtime.MOBILE.value},
+    "devsecops": {
+        Runtime.INFRA.value,
+        Runtime.CONFIG.value,
+        Runtime.TEST.value,
+    },
+    "code_vulnerabilities": set(_ALL),
+}
 
 
 class PromptHardeningNode(BaseExpertNode):
@@ -14,29 +46,23 @@ class PromptHardeningNode(BaseExpertNode):
     def expert_name(self) -> str:
         return "prompt_hardening"
 
-    def get_file_patterns(self) -> list[str]:
-        """Analyze all files - prompt injection can be anywhere."""
-        return []
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 class OwaspApiNode(BaseExpertNode):
-    """Expert node for OWASP API Security Top 10 analysis."""
+    """Expert node for OWASP API Security Top 10 analysis.
+
+    Includes browser code: frontend HTTP clients are direct evidence of how
+    the API is authenticated.
+    """
 
     @property
     def expert_name(self) -> str:
         return "owasp_api"
 
-    def get_file_patterns(self) -> list[str]:
-        """Focus on API-related files."""
-        return [
-            "*route*",
-            "*api*",
-            "*controller*",
-            "*endpoint*",
-            "*handler*",
-            "openapi*",
-            "swagger*",
-        ]
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 class OwaspWebNode(BaseExpertNode):
@@ -46,23 +72,8 @@ class OwaspWebNode(BaseExpertNode):
     def expert_name(self) -> str:
         return "owasp_web"
 
-    def get_file_patterns(self) -> list[str]:
-        """Focus on web application files."""
-        return [
-            "*.html",
-            "*.htm",
-            "*template*",
-            "*view*",
-            "*frontend*",
-            "*script*",
-            "*xss*",
-            "*csrf*",
-            "*.js",
-            "*.jsx",
-            "*.ts",
-            "*.tsx",
-            "*.vue",
-        ]
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 class OwaspMobileNode(BaseExpertNode):
@@ -72,63 +83,23 @@ class OwaspMobileNode(BaseExpertNode):
     def expert_name(self) -> str:
         return "owasp_mobile"
 
-    def get_file_patterns(self) -> list[str]:
-        """Focus on Android, iOS, Flutter, and React Native files."""
-        return [
-            "*AndroidManifest.xml",
-            "*network_security_config.xml",
-            "*.kt",
-            "*.kts",
-            "*.java",
-            "*build.gradle",
-            "*settings.gradle",
-            "*proguard-rules.pro",
-            "*Info.plist",
-            "*.entitlements",
-            "*.swift",
-            "*.m",
-            "*.mm",
-            "*Podfile",
-            "*Package.swift",
-            "*pubspec.yaml",
-            "*.dart",
-            "*app.json",
-            "*app.config.*",
-            "*metro.config.*",
-            "*react-native.config.*",
-            "*.tsx",
-            "*.jsx",
-        ]
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 class DevSecOpsNode(BaseExpertNode):
-    """Expert node for CI/CD, IaC, and container security."""
+    """Expert node for CI/CD, IaC, container and secret-management security.
+
+    Test files belong here: they are not part of the front/back attack
+    surface but routinely leak secrets and insecure configuration.
+    """
 
     @property
     def expert_name(self) -> str:
         return "devsecops"
 
-    def get_file_patterns(self) -> list[str]:
-        """Focus on DevOps and infrastructure files."""
-        return [
-            "*.yml",
-            "*.yaml",
-            "Dockerfile*",
-            "docker-compose*",
-            "*.tf",
-            "*.tfvars",
-            "*.hcl",
-            "Jenkinsfile*",
-            ".github/**",
-            ".gitlab-ci*",
-            "cloudformation/**",
-            "k8s/**",
-            "kubernetes/**",
-            "helm/**",
-            "requirements*.txt",
-            "package*.json",
-            "pom.xml",
-        ]
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 class CodeVulnerabilitiesNode(BaseExpertNode):
@@ -138,9 +109,8 @@ class CodeVulnerabilitiesNode(BaseExpertNode):
     def expert_name(self) -> str:
         return "code_vulnerabilities"
 
-    def get_file_patterns(self) -> list[str]:
-        """Analyze all code files."""
-        return []
+    def get_runtimes(self) -> set[str]:
+        return set(EXPERT_RUNTIMES[self.expert_name])
 
 
 # Expert registry for convenient access
@@ -156,13 +126,15 @@ EXPERT_CLASSES = {
 
 def create_expert_nodes(
     model: BaseChatModel,
+    config: ExpertRuntimeConfig | None = None,
 ) -> list[BaseExpertNode]:
-    """Factory function to create all expert nodes."""
+    """Factory function to create all expert nodes sharing one config."""
+    shared = config or ExpertRuntimeConfig()
     return [
-        PromptHardeningNode(model),
-        OwaspApiNode(model),
-        OwaspWebNode(model),
-        OwaspMobileNode(model),
-        DevSecOpsNode(model),
-        CodeVulnerabilitiesNode(model),
+        PromptHardeningNode(model, shared),
+        OwaspApiNode(model, shared),
+        OwaspWebNode(model, shared),
+        OwaspMobileNode(model, shared),
+        DevSecOpsNode(model, shared),
+        CodeVulnerabilitiesNode(model, shared),
     ]

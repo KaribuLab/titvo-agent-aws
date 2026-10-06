@@ -1,4 +1,4 @@
-"""Tests for FindingsMerger collection behavior."""
+"""Tests for FindingsMerger level-1 (exact evidence) deduplication."""
 
 from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
 from code_analysis.domain.services.findings_merger import FindingsMerger
@@ -25,7 +25,7 @@ def _issue(
 
 
 class TestFindingsMerger:
-    """Tests for non-deterministic findings collection."""
+    """Tests for deterministic L1 dedupe."""
 
     def test_empty_merge(self):
         """Empty collection should return COMPLETED."""
@@ -46,19 +46,63 @@ class TestFindingsMerger:
         assert len(collected) == 1
         assert collected[0].title == "SQL Injection"
 
-    def test_preserves_duplicates_for_agent_consolidation(self):
-        """Duplicate-looking issues should not be deduplicated in code."""
+    def test_identical_evidence_is_merged_with_highest_severity(self):
+        """Same (path, line, category, code) from two experts → one issue."""
         merger = FindingsMerger()
-        issue1 = _issue("Token storage", severity="HIGH")
+        issue1 = _issue("Token storage", severity="MEDIUM")
         issue2 = _issue("Token storage duplicate", severity="HIGH")
 
         merger.add_expert_result(ExpertResult("web", [issue1]))
         merger.add_expert_result(ExpertResult("mobile", [issue2]))
 
         collected = merger.get_merged_issues()
-        assert len(collected) == 2
-        assert collected[0].title == issue1.title
-        assert collected[1].title == issue2.title
+        assert len(collected) == 1
+        assert collected[0].title == issue1.title  # first seen wins the text
+        assert collected[0].severity == "HIGH"
+        assert collected[0].metadata["merged_from"] == ["mobile", "web"]
+
+    def test_same_location_different_code_is_kept(self):
+        """Different evidence at the same location is NOT a duplicate."""
+        merger = FindingsMerger()
+        merger.add_expert_result(ExpertResult("web", [_issue("A", code="a();")]))
+        merger.add_expert_result(ExpertResult("api", [_issue("B", code="b();")]))
+        assert len(merger.get_merged_issues()) == 2
+
+    def test_same_location_different_category_is_kept(self):
+        merger = FindingsMerger()
+        a = _issue("A")
+        b = _issue("B")
+        b.category = "Other"
+        merger.add_expert_result(ExpertResult("web", [a]))
+        merger.add_expert_result(ExpertResult("api", [b]))
+        assert len(merger.get_merged_issues()) == 2
+
+    def test_whitespace_differences_in_code_still_merge(self):
+        merger = FindingsMerger()
+        merger.add_expert_result(ExpertResult("web", [_issue("A", code="foo( x );")]))
+        merger.add_expert_result(ExpertResult("api", [_issue("B", code="foo(x);")]))
+        assert len(merger.get_merged_issues()) == 2  # normalization is whitespace only
+        merger2 = FindingsMerger()
+        merger2.add_expert_result(ExpertResult("web", [_issue("A", code="foo(x);  ")]))
+        merger2.add_expert_result(ExpertResult("api", [_issue("B", code="foo(x);")]))
+        assert len(merger2.get_merged_issues()) == 1
+
+    def test_dedupe_static_uses_issue_metadata_expert(self):
+        a = _issue("A")
+        a.metadata = {"expert": "owasp_web", "batch_index": 0}
+        b = _issue("B")
+        b.metadata = {"expert": "owasp_api", "batch_index": 2}
+        merged = FindingsMerger.dedupe([a, b])
+        assert len(merged) == 1
+        assert merged[0].metadata["merged_from"] == ["owasp_api", "owasp_web"]
+        assert merged[0].metadata["expert"] == "owasp_web"
+
+    def test_dedupe_does_not_mutate_inputs(self):
+        a = _issue("A", severity="LOW")
+        b = _issue("B", severity="HIGH")
+        FindingsMerger.dedupe([a, b])
+        assert a.severity == "LOW"
+        assert "merged_from" not in a.metadata
 
     def test_ignores_error_results(self):
         """Failed expert results should be skipped."""
@@ -101,12 +145,12 @@ class TestFindingsMerger:
         assert result["scaned_files"] == 2
         assert [issue["title"] for issue in result["issues"]] == ["One", "Two"]
 
-    def test_merge_results_collects_all_results(self):
-        """merge_results should collect every issue from all expert results."""
+    def test_merge_results_collects_distinct_results(self):
+        """merge_results keeps every distinct-evidence issue."""
         result = FindingsMerger.merge_results(
             [
                 ExpertResult("web", [_issue("One")]),
-                ExpertResult("mobile", [_issue("Two")]),
+                ExpertResult("mobile", [_issue("Two", path="src/two.py")]),
             ],
             scaned_files=3,
         )

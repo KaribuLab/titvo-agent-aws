@@ -30,6 +30,39 @@ AWS_SECRET_ACCESS_KEY=dummy
 python src/main.py
 ```
 
+## Pipeline de análisis
+
+El agente ejecuta un grafo LangGraph:
+
+```
+mcp_retrieve → [rag_retrieve] → classify_runtime → 6 expertos en paralelo → merge → END
+```
+
+- **`classify_runtime`** etiqueta cada archivo con uno o más runtimes (`browser`, `server`,
+  `mobile`, `infra`, `test`, `config`, `unknown`) de forma determinista (path, extensión, imports y
+  perfil del proyecto). Cada experto selecciona archivos por intersección de runtimes; no hay
+  fallback "analiza todo".
+- **Expertos**: los archivos grandes se parten en chunks con solapamiento (nunca se truncan) y los
+  chunks se agrupan en lotes acotados; una llamada LLM por lote, en paralelo bajo un semáforo y con
+  reintentos. Un lote que falla queda registrado en `failed_batches`.
+- **`merge`**: consolidación en dos niveles. L1 determinista por `(path, line, category, code)`;
+  L2 con LLM por archivo, exigiendo `source_ids` por issue y rechazando cualquier grupo que pierda,
+  invente o rebaje un hallazgo. Si hubo lotes fallidos el resultado incluye `incomplete` y el
+  status nunca es `COMPLETED`; el reporte HTML muestra un banner de análisis incompleto.
+
+### Variables de entorno de los expertos
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `TITVO_EXPERT_FILE_CAP_CHARS` | `30000` | Tamaño máximo de cada chunk (chars). Archivos mayores se parten. |
+| `TITVO_EXPERT_BATCH_BUDGET_CHARS` | `200000` | Presupuesto de chars por lote (una llamada LLM). |
+| `TITVO_EXPERT_CHUNK_OVERLAP_CHARS` | `5000` | Solapamiento entre chunks consecutivos. |
+| `TITVO_EXPERT_MAX_CONCURRENCY` | `4` | Lotes concurrentes (todos los expertos comparten el límite). |
+
+Valores inválidos o no positivos caen al default. En un repo de 100-500 archivos un fullscan
+produce decenas de lotes por experto; ajustar `TITVO_EXPERT_MAX_CONCURRENCY` según los límites del
+proveedor LLM.
+
 ## Infraestructura
 
 La infraestructura está definida en el directorio `aws/` usando Terragrunt:

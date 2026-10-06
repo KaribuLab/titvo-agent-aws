@@ -1,11 +1,21 @@
 """Base expert node for LangGraph workflow.
 
-Provides common functionality for all security expert nodes.
+Each expert:
+1. Selects files whose ``runtimes`` intersect its own runtime set (no fallback).
+2. Splits them into chunks (large files) and packs the chunks into batches.
+3. Runs one LLM call per batch, concurrently under a shared semaphore, with
+   retries on provider errors.
+4. Parses every batch into ``ExpertIssue`` objects, mapping chunk-relative
+   line numbers back to the original file.
+5. Returns only its delta: issues, errors, failed batches and metadata.
 """
 
+import asyncio
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -13,270 +23,350 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from code_analysis import prompts as prompt_registry
 from code_analysis.domain.entities.expert_result import ExpertIssue, ExpertResult
-from code_analysis.infra.adapters.langgraph.nodes._structural_lines import is_structural
+from code_analysis.domain.services.batch_planner import (
+    DEFAULT_BATCH_BUDGET_CHARS,
+    DEFAULT_CHUNK_OVERLAP_CHARS,
+    DEFAULT_PER_FILE_CAP_CHARS,
+    Batch,
+    Chunk,
+    plan_files,
+)
+from code_analysis.domain.services.runtime_classifier import (
+    ProjectProfile,
+    Runtime,
+    classify_values,
+)
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
 
-# Per-file character budget, independent of how many other files are in the
-# commit. Ratios: chars ÷ 4 ≈ tokens (rough estimate).
+ALL_RUNTIME_VALUES: frozenset[str] = frozenset(r.value for r in Runtime)
 
-# Generous cap applied to a file based on its own size — reached before any
-# other file in the commit is considered.
-_PER_FILE_CAP_CHARS = 30_000  # ≈ 7 500 tokens/file
+DEFAULT_MAX_CONCURRENCY = 4
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_BACKOFF_BASE_SECONDS = 1.0
 
-# Aggregate ceiling for the whole commit's formatted content, so the total
-# prompt still fits a 128k-token model window (leaving room for the system
-# prompt, RAG context and the other expert-node overhead). ≈ 50 k tokens.
-_GLOBAL_BUDGET_CHARS = 200_000
-
-# Floor so a single file is never crushed to something unusable when the
-# aggregate shrink kicks in.
-_MIN_FILE_CHARS = 3_000
+ENV_FILE_CAP = "TITVO_EXPERT_FILE_CAP_CHARS"
+ENV_BATCH_BUDGET = "TITVO_EXPERT_BATCH_BUDGET_CHARS"
+ENV_CHUNK_OVERLAP = "TITVO_EXPERT_CHUNK_OVERLAP_CHARS"
+ENV_MAX_CONCURRENCY = "TITVO_EXPERT_MAX_CONCURRENCY"
 
 
-def _compute_file_budgets(files: list[dict[str, str]]) -> dict[str, int]:
-    """Return each file's truncation budget, keyed by path.
+@dataclass
+class ExpertRuntimeConfig:
+    """Tunables shared by every expert node (one instance per workflow)."""
 
-    Each file's budget starts at its own content size (capped at
-    ``_PER_FILE_CAP_CHARS``) — it does NOT depend on how many other files are
-    in the commit. Only when the commit's *actual total content* would
-    exceed ``_GLOBAL_BUDGET_CHARS`` do budgets shrink together, proportionally
-    to that real total (not to file count), so an unchanged file gets the
-    same budget whether it sits next to 2 files or 50 tiny ones — a commit
-    with many small files no longer forces everyone down just because of
-    the file count.
-    """
-    base_caps = {f["path"]: min(len(f["content"]), _PER_FILE_CAP_CHARS) for f in files}
-    total = sum(base_caps.values())
-    if total <= _GLOBAL_BUDGET_CHARS or total == 0:
-        return base_caps
+    per_file_cap_chars: int = DEFAULT_PER_FILE_CAP_CHARS
+    batch_budget_chars: int = DEFAULT_BATCH_BUDGET_CHARS
+    chunk_overlap_chars: int = DEFAULT_CHUNK_OVERLAP_CHARS
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS
+    _semaphore: asyncio.Semaphore | None = field(default=None, init=False, repr=False)
 
-    shrink = _GLOBAL_BUDGET_CHARS / total
-    floored = {
-        path: max(_MIN_FILE_CHARS, int(cap * shrink))
-        for path, cap in base_caps.items()
-    }
-    if sum(floored.values()) <= _GLOBAL_BUDGET_CHARS:
-        return floored
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(max(1, self.max_concurrency))
+        return self._semaphore
 
-    # Too many files for the floor to be honored without blowing the
-    # aggregate ceiling (e.g. hundreds of small/medium files). The ceiling
-    # is the hard constraint (an oversized prompt can get rejected or
-    # silently truncated by the provider), so drop the floor here and fall
-    # back to pure proportional shrink, which by construction always sums
-    # to at most _GLOBAL_BUDGET_CHARS.
-    return {path: max(1, int(cap * shrink)) for path, cap in base_caps.items()}
+    @classmethod
+    def from_env(cls) -> "ExpertRuntimeConfig":
+        """Read tunables from the environment, falling back to defaults."""
+        return cls(
+            per_file_cap_chars=_env_int(ENV_FILE_CAP, DEFAULT_PER_FILE_CAP_CHARS),
+            batch_budget_chars=_env_int(ENV_BATCH_BUDGET, DEFAULT_BATCH_BUDGET_CHARS),
+            chunk_overlap_chars=_env_int(
+                ENV_CHUNK_OVERLAP, DEFAULT_CHUNK_OVERLAP_CHARS
+            ),
+            max_concurrency=_env_int(ENV_MAX_CONCURRENCY, DEFAULT_MAX_CONCURRENCY),
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "per_file_cap_chars": self.per_file_cap_chars,
+            "batch_budget_chars": self.batch_budget_chars,
+            "chunk_overlap_chars": self.chunk_overlap_chars,
+            "max_concurrency": self.max_concurrency,
+        }
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        LOGGER.warning(
+            "Invalid integer for %s=%r; using default %d", name, raw, default
+        )
+        return default
+    if value <= 0:
+        LOGGER.warning(
+            "Non-positive value for %s=%d; using default %d", name, value, default
+        )
+        return default
+    return value
+
+
+@dataclass
+class _BatchOutcome:
+    batch: Batch
+    issues: list[ExpertIssue] = field(default_factory=list)
+    error: str | None = None
 
 
 class BaseExpertNode(ABC):
-    """Abstract base for expert analysis nodes.
+    """Abstract base for expert analysis nodes."""
 
-    Each expert node:
-    1. Filters files based on expert-specific patterns
-    2. Formats files for analysis
-    3. Invokes LLM with expert prompt
-    4. Parses JSON response into ExpertResult
-    """
-
-    def __init__(self, model: BaseChatModel):
+    def __init__(
+        self,
+        model: BaseChatModel,
+        config: ExpertRuntimeConfig | None = None,
+    ):
         self._model = model
+        self._config = config or ExpertRuntimeConfig()
 
     @property
     @abstractmethod
     def expert_name(self) -> str:
         """Return the expert's identifier name."""
-        pass
 
-    def get_file_patterns(self) -> list[str]:
-        """Return file patterns this expert analyzes.
+    def get_runtimes(self) -> set[str]:
+        """Runtimes this expert analyses. Default: every runtime."""
+        return set(ALL_RUNTIME_VALUES)
 
-        Return empty list to analyze all files.
-        """
-        return []
+    # ------------------------------------------------------------------
+    # Selection
+    # ------------------------------------------------------------------
 
-    def should_analyze_file(self, file_path: str) -> bool:
-        """Check if file should be analyzed by this expert."""
-        patterns = self.get_file_patterns()
-        if not patterns:
-            return True
+    def matches_runtimes(self, runtimes: list[str] | None) -> bool:
+        """True when the file's runtime list intersects this expert's set."""
+        effective = list(runtimes) if runtimes else [Runtime.UNKNOWN.value]
+        return bool(set(effective) & self.get_runtimes())
 
-        import fnmatch
+    def _select_files(self, files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [f for f in files if self.matches_runtimes(f.get("runtimes"))]
 
-        return any(fnmatch.fnmatch(file_path.lower(), p.lower()) for p in patterns)
-
-    def _filter_files(
+    def _select_rag_chunks(
         self,
-        files: list[dict[str, str]],
-    ) -> list[dict[str, str]]:
-        """Filter files based on expert patterns."""
-        patterns = self.get_file_patterns()
-        if not patterns:
-            return files
-
-        filtered = [f for f in files if self.should_analyze_file(f["path"])]
-
-        # Fallback: if nothing matched, analyze all
-        if not filtered and files:
-            LOGGER.debug(
-                "No files matched patterns %s for %s, using fallback",
-                patterns,
-                self.expert_name,
+        chunks: list[dict[str, Any]],
+        profile: ProjectProfile,
+    ) -> list[dict[str, Any]]:
+        selected = []
+        for chunk in chunks:
+            runtimes = classify_values(
+                chunk.get("file_path", ""), chunk.get("chunk_text", ""), profile
             )
-            return files
+            if self.matches_runtimes(runtimes):
+                selected.append(chunk)
+        return selected
 
-        return filtered
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
 
     async def __call__(self, state: AgentState) -> dict[str, Any]:
-        """Execute expert analysis.
+        files = state.get("files", []) or []
+        selected = self._select_files(files)
 
-        Args:
-            state: Current workflow state with files
+        LOGGER.info(
+            "%s selected %d of %d files",
+            self.expert_name,
+            len(selected),
+            len(files),
+        )
 
-        Returns:
-            State updates with new issues
-        """
+        if not selected:
+            return {
+                "expert_metadata": {
+                    self.expert_name: {"files_analyzed": 0, "skipped": True},
+                }
+            }
+
         try:
-            # Filter files for this expert
-            files = state.get("files", [])
-            filtered_files = self._filter_files(files)
-
-            LOGGER.info(
-                "%s analyzing %d files (%d total)",
-                self.expert_name,
-                len(filtered_files),
-                len(files),
+            batches = plan_files(
+                selected,
+                per_file_cap=self._config.per_file_cap_chars,
+                batch_budget=self._config.batch_budget_chars,
+                overlap_chars=self._config.chunk_overlap_chars,
             )
-
-            if not filtered_files:
-                LOGGER.debug("No files to analyze for %s", self.expert_name)
-                return {"issues": []}
-
-            # Format commit files for LLM
-            files_content = self._format_files(filtered_files)
-
-            # Filter RAG chunks by this expert's file patterns and append
-            all_rag_chunks = state.get("rag_chunks", [])
-            filtered_rag = [
-                c
-                for c in all_rag_chunks
-                if self.should_analyze_file(c.get("file_path", ""))
-            ]
-            rag_content = self._format_rag_chunks(filtered_rag)
-
-            # Get expert prompt
+            profile = ProjectProfile(
+                **(state.get("expert_metadata", {}) or {}).get("project_profile", {})
+            )
+            rag_content = self._format_rag_chunks(
+                self._select_rag_chunks(state.get("rag_chunks", []) or [], profile)
+            )
             expert_prompt = prompt_registry.get_expert_prompt(self.expert_name)
 
-            # Create messages
-            system_msg = SystemMessage(content=expert_prompt)
-            human_msg = HumanMessage(content=files_content + rag_content)
-
-            # Invoke LLM
-            LOGGER.debug("Invoking %s expert", self.expert_name)
-            response = await self._model.ainvoke([system_msg, human_msg])
-
-            # Parse response
-            result = self._parse_response(response.content, filtered_files)
-
             LOGGER.info(
-                "%s found %d issues",
+                "%s running %d batches over %d chunks",
                 self.expert_name,
-                len(result.issues),
+                len(batches),
+                sum(len(b.chunks) for b in batches),
             )
-
-            # Return issues to merge into state
+            outcomes = await asyncio.gather(
+                *(self._run_batch(b, expert_prompt, rag_content) for b in batches)
+            )
+        except Exception as exc:  # noqa: BLE001 - expert failure must not kill the scan
+            LOGGER.exception(
+                "Expert %s failed before running batches", self.expert_name
+            )
+            paths = sorted({f["path"] for f in selected})
             return {
-                "issues": state.get("issues", []) + result.issues,
-                "expert_metadata": {
-                    **state.get("expert_metadata", {}),
-                    self.expert_name: {
-                        "files_analyzed": len(filtered_files),
-                        "issues_found": len(result.issues),
-                    },
-                },
-            }
-
-        except Exception as e:
-            LOGGER.exception("Expert %s failed", self.expert_name)
-            # Record error but continue workflow
-            return {
-                "issues": state.get("issues", []),
-                "expert_errors": [
-                    *state.get("expert_errors", []),
-                    f"{self.expert_name}: {e}",
+                "expert_errors": [f"{self.expert_name}: {exc}"],
+                "failed_batches": [
+                    {
+                        "expert": self.expert_name,
+                        "batch_index": -1,
+                        "paths": paths,
+                        "error": str(exc),
+                    }
                 ],
                 "expert_metadata": {
-                    **state.get("expert_metadata", {}),
-                    self.expert_name: {"error": str(e)},
+                    self.expert_name: {
+                        "files_analyzed": len(selected),
+                        "batches": 0,
+                        "failed_batches": 1,
+                        "error": str(exc),
+                    }
                 },
             }
 
-    def _format_files(self, files: list[dict[str, str]]) -> str:
-        """Format commit files for LLM consumption.
-
-        Each file's char budget is driven by its own size (see
-        ``_compute_file_budgets``), with structure-aware truncation so that
-        even truncated files preserve imports + function/class signatures
-        alongside as much body as fits.
-        """
-        budgets = _compute_file_budgets(files)
-        parts = []
-        for f in files:
-            limit = budgets[f["path"]]
-            content, truncated = self._smart_truncate(f["content"], limit)
-            parts.append(f"=== FILE: {f['path']} ===")
-            parts.append(content)
-            if truncated:
-                parts.append(
-                    "[... file truncated: structural signature preserved above ...]"
+        issues: list[ExpertIssue] = []
+        errors: list[str] = []
+        failed: list[dict[str, Any]] = []
+        for outcome in sorted(outcomes, key=lambda o: o.batch.index):
+            if outcome.error:
+                errors.append(
+                    f"{self.expert_name}: batch {outcome.batch.index} failed: "
+                    f"{outcome.error}"
                 )
+                failed.append(
+                    {
+                        "expert": self.expert_name,
+                        "batch_index": outcome.batch.index,
+                        "paths": outcome.batch.paths,
+                        "error": outcome.error,
+                    }
+                )
+            else:
+                issues.extend(outcome.issues)
+
+        LOGGER.info(
+            "%s found %d issues (%d/%d batches failed)",
+            self.expert_name,
+            len(issues),
+            len(failed),
+            len(batches),
+        )
+        return {
+            "issues": issues,
+            "expert_errors": errors,
+            "failed_batches": failed,
+            "expert_metadata": {
+                self.expert_name: {
+                    "files_analyzed": len(selected),
+                    "batches": len(batches),
+                    "failed_batches": len(failed),
+                    "issues_found": len(issues),
+                }
+            },
+        }
+
+    async def _run_batch(
+        self,
+        batch: Batch,
+        expert_prompt: str,
+        rag_content: str,
+    ) -> _BatchOutcome:
+        messages = [
+            SystemMessage(content=expert_prompt),
+            HumanMessage(content=self._format_batch(batch) + rag_content),
+        ]
+        try:
+            async with self._config.semaphore:
+                response = await self._invoke_with_retry(messages, batch.index)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error(
+                "%s batch %d failed after %d attempts: %s",
+                self.expert_name,
+                batch.index,
+                self._config.max_attempts,
+                exc,
+            )
+            return _BatchOutcome(batch=batch, error=str(exc))
+
+        result = self._parse_response(response.content, batch)
+        if result.error:
+            return _BatchOutcome(batch=batch, error=result.error)
+        return _BatchOutcome(batch=batch, issues=result.issues)
+
+    async def _invoke_with_retry(self, messages: list[Any], batch_index: int) -> Any:
+        last_exc: Exception | None = None
+        for attempt in range(self._config.max_attempts):
+            try:
+                return await self._model.ainvoke(messages)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt + 1 >= self._config.max_attempts:
+                    break
+                delay = self._config.backoff_base_seconds * (2**attempt)
+                LOGGER.warning(
+                    "%s batch %d attempt %d/%d failed (%s); retrying in %.1fs",
+                    self.expert_name,
+                    batch_index,
+                    attempt + 1,
+                    self._config.max_attempts,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
+
+    # ------------------------------------------------------------------
+    # Formatting
+    # ------------------------------------------------------------------
+
+    def _format_batch(self, batch: Batch) -> str:
+        parts: list[str] = []
+        for chunk in batch.chunks:
+            parts.append(self._format_chunk_header(chunk))
+            if chunk.prefix:
+                parts.append(chunk.prefix.rstrip("\n"))
+            parts.append(chunk.body)
             parts.append("=== END FILE ===")
             parts.append("")
         return "\n".join(parts)
 
     @staticmethod
-    def _smart_truncate(content: str, max_chars: int) -> tuple[str, bool]:
-        """Truncate file content while preserving structural lines.
-
-        Strategy (when content > max_chars):
-        - First 70% of budget: verbatim content from the beginning
-          (imports + first functions/classes are typically here).
-        - Remaining 30%: structural-only summary of what was cut
-          (function/class signatures from the skipped portion).
-
-        This ensures the LLM always sees:
-        1. All imports and early function bodies (complete logic flow).
-        2. The names and signatures of any functions/classes it can't read in full.
-        """
-        if len(content) <= max_chars:
-            return content, False
-
-        head_limit = max_chars * 7 // 10
-        # Extend to last complete line within head_limit
-        raw_head = content[:head_limit]
-        last_nl = raw_head.rfind("\n")
-        head = content[: last_nl + 1] if last_nl > 0 else raw_head
-
-        rest = content[len(head) :]
-        tail_budget = max_chars - len(head)
-
-        structural_lines = [line for line in rest.splitlines() if is_structural(line)]
-        tail = "\n".join(structural_lines)[:tail_budget]
-
-        if tail:
-            omitted = len(rest) - len(tail)
-            separator = (
-                f"\n# [{omitted:,} chars omitted — structural overview of remainder]\n"
+    def _format_chunk_header(chunk: Chunk) -> str:
+        header = f"=== FILE: {chunk.path} [runtime: {chunk.primary_runtime}]"
+        if chunk.is_partial:
+            header += (
+                f" [lines {chunk.start_line}-{chunk.end_line} "
+                f"of {chunk.total_lines}] ===\n"
+                f"# Chunk {chunk.chunk_index + 1} of {chunk.total_chunks}. "
+                f"Report `line` as the absolute line number in the original file "
+                f"(this chunk starts at line {chunk.start_line})."
             )
-            return head + separator + tail, True
+        else:
+            header += " ==="
+        return header
 
-        return head, True
+    def _format_files(self, files: list[dict[str, Any]]) -> str:
+        """Format files as a single batch (test/debug helper)."""
+        batches = plan_files(
+            files,
+            per_file_cap=self._config.per_file_cap_chars,
+            batch_budget=10**12,
+            overlap_chars=self._config.chunk_overlap_chars,
+        )
+        return "".join(self._format_batch(b) for b in batches)
 
     def _format_rag_chunks(self, chunks: list[dict]) -> str:
-        """Format RAG context chunks for LLM consumption.
-
-        Returns empty string when chunks list is empty so no block is added.
-        """
         if not chunks:
             return ""
         parts = ["\n=== RAG CONTEXT (codebase background) ==="]
@@ -286,25 +376,26 @@ class BaseExpertNode(ABC):
         parts.append("=== END RAG CONTEXT ===\n")
         return "\n".join(parts)
 
+    # ------------------------------------------------------------------
+    # Parsing
+    # ------------------------------------------------------------------
+
     def _parse_response(
         self,
         content: str | list[Any],
-        files: list[dict[str, str]],
+        batch: Batch,
     ) -> ExpertResult:
-        """Parse LLM response into ExpertResult."""
-        # Handle content that might be a list (OpenAI Responses API)
+        """Parse an LLM response for *batch* into an ExpertResult."""
         if isinstance(content, list):
             text_parts = []
             for block in content:
                 if isinstance(block, str):
                     text_parts.append(block)
                 elif isinstance(block, dict) and "text" in block:
-                    text_parts.append(block["text"])
+                    text_parts.append(str(block["text"]))
             content = "".join(text_parts)
 
         content = str(content).strip()
-
-        # Try to extract JSON from markdown fences
         if content.startswith("```json"):
             content = content[7:]
             if content.endswith("```"):
@@ -313,49 +404,88 @@ class BaseExpertNode(ABC):
             content = content[3:]
             if content.endswith("```"):
                 content = content[:-3]
-
         content = content.strip()
 
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
             LOGGER.warning(
-                "Failed to parse JSON from %s response: %s",
+                "Failed to parse JSON from %s batch %d: %s",
                 self.expert_name,
+                batch.index,
                 content[:200],
             )
             return ExpertResult(
                 expert_name=self.expert_name,
                 issues=[],
                 error="Failed to parse JSON response",
-                files_analyzed=len(files),
+                files_analyzed=len(batch.paths),
             )
 
-        # Extract issues
-        issues_data = data.get("issues", [])
+        issues_data = data.get("issues", []) if isinstance(data, dict) else []
         if not isinstance(issues_data, list):
             LOGGER.warning(
-                "Invalid issues format from %s: %s",
-                self.expert_name,
-                type(issues_data),
+                "Invalid issues format from %s: %s", self.expert_name, type(issues_data)
             )
             issues_data = []
 
-        issues = []
+        issues: list[ExpertIssue] = []
         for issue_data in issues_data:
             try:
                 issue = ExpertIssue.from_dict(issue_data)
-                issues.append(issue)
-            except Exception as e:
+            except Exception as exc:  # noqa: BLE001
                 LOGGER.warning(
                     "Failed to parse issue from %s: %s - %s",
                     self.expert_name,
-                    e,
+                    exc,
                     issue_data,
                 )
+                continue
+            chunk = self._resolve_chunk(issue, batch)
+            if chunk is not None:
+                issue.line = self._resolve_line(issue.line, chunk)
+            issue.metadata = {
+                "expert": self.expert_name,
+                "batch_index": batch.index,
+                "chunk_index": chunk.chunk_index if chunk is not None else 0,
+            }
+            issues.append(issue)
 
         return ExpertResult(
             expert_name=self.expert_name,
             issues=issues,
-            files_analyzed=len(files),
+            files_analyzed=len(batch.paths),
         )
+
+    @staticmethod
+    def _resolve_chunk(issue: ExpertIssue, batch: Batch) -> Chunk | None:
+        candidates = [c for c in batch.chunks if c.path == issue.path]
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+        for chunk in candidates:
+            if chunk.start_line <= issue.line <= chunk.end_line:
+                return chunk
+        return candidates[0]
+
+    @staticmethod
+    def _resolve_line(line: int, chunk: Chunk) -> int:
+        """Map a reported line to the original file.
+
+        The prompt asks for absolute line numbers; models sometimes answer
+        relative to the chunk anyway. A value inside the chunk's absolute range
+        is kept; a value that only fits the relative range is offset.
+        """
+        try:
+            line = int(line)
+        except (TypeError, ValueError):
+            return 0
+        if not chunk.is_partial or line <= 0:
+            return line
+        if chunk.start_line <= line <= chunk.end_line:
+            return line
+        relative_span = chunk.end_line - chunk.start_line + 1
+        if 1 <= line <= relative_span:
+            return chunk.start_line - 1 + line
+        return line

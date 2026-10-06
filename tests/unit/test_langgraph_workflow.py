@@ -327,8 +327,8 @@ class TestMergeFindingsNode:
         result = node(state)
         assert result["status"] == "WARNING"
 
-    def test_without_model_preserves_duplicate_findings(self, node):
-        """Without consolidation model, duplicate-looking issues are preserved."""
+    def test_without_model_merges_identical_evidence(self, node):
+        """Same (path, line, category, code) is one finding after L1."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         # Same issue twice
@@ -366,7 +366,8 @@ class TestMergeFindingsNode:
         result = node(state)
 
         final_output = result.get("final_output", {})
-        assert len(final_output.get("issues", [])) == 2
+        assert len(final_output.get("issues", [])) == 1
+        assert final_output["issues"][0]["title"] == "XSS"
 
     def test_without_model_preserves_all_findings(self, node):
         """Fallback should not choose between duplicate-looking issues."""
@@ -419,7 +420,7 @@ class TestMergeFindingsNode:
         model = MagicMock()
         model.invoke.return_value = MagicMock(
             content=(
-                '{"issues":[{"title":"URL externa sin validación",'
+                '{"issues":[{"source_ids":[0,1],"title":"URL externa sin validación",'
                 '"description":"Se navega a una URL externa sin allowlist.",'
                 '"severity":"MEDIUM","category":"WebView",'
                 '"path":"utils/resolveWebView.ts","line":40,'
@@ -481,7 +482,7 @@ class TestMergeFindingsNode:
         model = MagicMock()
         model.invoke.return_value = MagicMock(
             content=(
-                '```json\n{"issues":[{"title":"Finding A",'
+                '```json\n{"issues":[{"source_ids":[0,1],"title":"Finding A",'
                 '"description":"A","severity":"MEDIUM","category":"A",'
                 '"path":"same/file.ts","line":10,"summary":"A",'
                 '"code":"foo();","recommendation":"Fix A"}]}\n```'
@@ -539,6 +540,7 @@ class TestMergeFindingsNode:
                     "text": {
                         "issues": [
                             {
+                                "source_ids": [0, 1],
                                 "title": "Finding A",
                                 "description": "A",
                                 "severity": "MEDIUM",
@@ -602,7 +604,7 @@ class TestMergeFindingsNode:
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         repaired_json = (
-            '{"issues":[{"title":"Finding A",'
+            '{"issues":[{"source_ids":[0,1],"title":"Finding A",'
             '"description":"A","severity":"MEDIUM","category":"A",'
             '"path":"same/file.ts","line":10,"summary":"A",'
             '"code":"foo();","recommendation":"Fix A"}]}'
@@ -611,7 +613,8 @@ class TestMergeFindingsNode:
         model.invoke.side_effect = [
             MagicMock(
                 content=(
-                    "{'issues':[{'title':'Finding A','description':'A',"
+                    "{'issues':[{'source_ids':[0,1],'title':'Finding A',"
+                    "'description':'A',"
                     "'severity':'MEDIUM','category':'A','path':'same/file.ts',"
                     "'line':10,'summary':'A','code':'foo();',"
                     "'recommendation':'Fix A'}]}"
@@ -786,7 +789,7 @@ class TestMergeFindingsNode:
         model = MagicMock()
         model.invoke.return_value = MagicMock(
             content=(
-                '{"issues":[{"title":"Finding consolidado",'
+                '{"issues":[{"source_ids":[0,1],"title":"Finding consolidado",'
                 '"description":"Riesgo consolidado.","severity":"HIGH",'
                 '"category":"Auth","path":"same/file.ts","line":10,'
                 '"summary":"Token expuesto.",'
@@ -842,7 +845,8 @@ class TestMergeFindingsNode:
         model = MagicMock()
         model.invoke.return_value = MagicMock(
             content=(
-                '{"issues":[{"title":"Tokens OAuth en localStorage (web)",'
+                '{"issues":[{"source_ids":[0,1],'
+                '"title":"Tokens OAuth en localStorage (web)",'
                 '"description":"Los expertos web y mobile detectaron que los '
                 'tokens OAuth se persisten en localStorage, lo que aumenta el '
                 'impacto de XSS y permite secuestro de sesión.",'
@@ -909,14 +913,14 @@ class TestMergeFindingsNode:
         model.invoke.return_value = MagicMock(
             content=(
                 '{"issues":['
-                '{"title":"Almacenamiento de tokens en localStorage",'
+                '{"source_ids":[0],"title":"Almacenamiento de tokens en localStorage",'
                 '"description":"Tokens accesibles desde JavaScript.",'
                 '"severity":"HIGH","category":"Token Storage",'
                 '"path":"services/auth/tokenStorage.ts","line":16,'
                 '"summary":"Tokens en localStorage.",'
                 f'"code":"{duplicate_code}",'
                 '"recommendation":"Usar cookies HttpOnly."},'
-                '{"title":"Almacenamiento inseguro de tokens",'
+                '{"source_ids":[1],"title":"Almacenamiento inseguro de tokens",'
                 '"description":"Tokens expuestos ante XSS.",'
                 '"severity":"HIGH","category":"OAuth Token Storage",'
                 '"path":"services/auth/tokenStorage.ts","line":16,'
@@ -968,14 +972,14 @@ class TestMergeFindingsNode:
         assert issues[0]["line"] == 16
         assert issues[0]["code"] == duplicate_code
 
-    def test_merge_node_returns_final_output_and_consolidated_issues(self):
-        """Merge node should return both final_output and consolidated issues."""
+    def test_merge_node_returns_final_output_without_issues_key(self):
+        """Consolidated issues live in final_output only (issues is a reducer)."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
         model = MagicMock()
         model.invoke.return_value = MagicMock(
             content=(
-                '{"issues":[{"title":"Consolidated A",'
+                '{"issues":[{"source_ids":[0,1],"title":"Consolidated A",'
                 '"description":"A","severity":"HIGH","category":"A",'
                 '"path":"src/app.ts","line":5,'
                 '"summary":"A","code":"foo();","recommendation":"Fix A"}]}'
@@ -1018,12 +1022,11 @@ class TestMergeFindingsNode:
         result = node(state)
 
         assert "final_output" in result
-        assert "issues" in result
+        assert "issues" not in result
         assert result["final_output"]["status"] == "FAILED"
         assert len(result["final_output"]["issues"]) == 1
         assert result["final_output"]["issues"][0]["title"] == "Consolidated A"
-        assert len(result["issues"]) == 1
-        assert result["issues"][0].title == "Consolidated A"
+        assert result["expert_metadata"]["consolidation"]["l2_out"] == 1
 
 
 class TestAgentState:
@@ -1129,15 +1132,40 @@ class TestLangGraphWorkflowWithRag:
         assert "rag_retrieve" not in nodes, f"'rag_retrieve' should not be in {nodes}"
         assert "expert_owasp_mobile" in nodes
 
-    def test_workflow_chains_owasp_mobile_between_web_and_devsecops(
+    def test_workflow_fans_out_from_classify_and_converges_on_merge(
         self, mock_mcp_client, mock_model
     ):
-        """OWASP Mobile should run after web and before DevSecOps."""
+        """classify_runtime → every expert (parallel) → merge."""
         builder = LangGraphWorkflowBuilder(mock_mcp_client, mock_model, rag_node=None)
         workflow = builder.build()
 
+        nodes = list(workflow.get_graph().nodes.keys())
+        assert "classify_runtime" in nodes
+
         edges = workflow.get_graph().edges
         edge_pairs = {(edge.source, edge.target) for edge in edges}
+        experts = [
+            "expert_prompt_hardening",
+            "expert_owasp_api",
+            "expert_owasp_web",
+            "expert_owasp_mobile",
+            "expert_devsecops",
+            "expert_code_vulnerabilities",
+        ]
+        for expert in experts:
+            assert ("classify_runtime", expert) in edge_pairs
+            assert (expert, "merge") in edge_pairs
+        # No sequential chaining between experts.
+        for a in experts:
+            for b in experts:
+                assert (a, b) not in edge_pairs
 
-        assert ("expert_owasp_web", "expert_owasp_mobile") in edge_pairs
-        assert ("expert_owasp_mobile", "expert_devsecops") in edge_pairs
+    def test_workflow_with_rag_routes_rag_to_classify(
+        self, mock_mcp_client, mock_model, mock_rag_port
+    ):
+        rag_node = RagRetrievalNode(mock_rag_port)
+        workflow = LangGraphWorkflowBuilder(
+            mock_mcp_client, mock_model, rag_node=rag_node
+        ).build()
+        edge_pairs = {(e.source, e.target) for e in workflow.get_graph().edges}
+        assert ("rag_retrieve", "classify_runtime") in edge_pairs

@@ -94,9 +94,17 @@ class ExpertIssue:
             metadata=metadata,
         )
 
-    def get_dedup_key(self) -> tuple[str, int, str]:
-        """Return key for deduplication: (path, line, category)."""
-        return (self.path, self.line, self.category)
+    def get_dedup_key(self) -> tuple[str, int, str, str]:
+        """Return key for L1 deduplication: (path, line, category, normalized code).
+
+        Only findings with identical evidence are considered duplicates.
+        """
+        return (self.path, self.line, self.category, normalize_code(self.code))
+
+
+def normalize_code(code: str | None) -> str:
+    """Collapse whitespace so cosmetic differences do not break dedup keys."""
+    return " ".join((code or "").split())
 
 
 @dataclass

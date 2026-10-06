@@ -111,7 +111,7 @@ class TestExpertIssue:
         assert issue.metadata.get("extra_field") == "ignored"
 
     def test_get_dedup_key(self):
-        """Deduplication key should be (path, line, category)."""
+        """Deduplication key should be (path, line, category, normalized code)."""
         issue = ExpertIssue(
             title="Test",
             description="Test",
@@ -123,7 +123,7 @@ class TestExpertIssue:
             code="test",
             recommendation="Fix",
         )
-        assert issue.get_dedup_key() == ("src/app.py", 42, "Injection")
+        assert issue.get_dedup_key() == ("src/app.py", 42, "Injection", "test")
 
 
 class TestExpertResult:

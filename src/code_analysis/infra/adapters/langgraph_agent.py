@@ -17,6 +17,9 @@ from code_analysis.domain.ports.ia_agent import (
     AgentResponse,
     AsyncAgentToolsFactory,
 )
+from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
+    ExpertRuntimeConfig,
+)
 from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
     RagRetrievalNode,
 )
@@ -31,8 +34,9 @@ class LangGraphAgent(AbstractAgent):
 
     This agent uses a StateGraph workflow with:
     - MCP Retrieval Node (fetches files from git)
-    - 5 Expert Nodes (prompt_hardening, owasp_api, owasp_web, devsecops, code_vulns)
-    - Merge Node (deduplication, final status)
+    - Classify Runtime Node (deterministic runtime labels per file)
+    - 6 Expert Nodes running in parallel (batched, chunked, retried)
+    - Merge Node (two-level consolidation, incomplete reporting, final status)
     """
 
     def __init__(
@@ -43,11 +47,13 @@ class LangGraphAgent(AbstractAgent):
         langfuse_callback_handler: CallbackHandler | None = None,
         langfuse_metadata: dict[str, Any] | None = None,
         rag_node: RagRetrievalNode | None = None,
+        expert_config: ExpertRuntimeConfig | None = None,
     ):
         super().__init__(system_prompt, model_factory, tools_factory)
         self._langfuse_handler = langfuse_callback_handler
         self._langfuse_metadata = langfuse_metadata or {}
         self._rag_node = rag_node
+        self._expert_config = expert_config or ExpertRuntimeConfig()
         self._workflow = None
         self._mcp_client = None
 
@@ -85,7 +91,10 @@ class LangGraphAgent(AbstractAgent):
 
         # Build workflow
         self._workflow = create_workflow(
-            self._mcp_client, model, rag_node=self._rag_node
+            self._mcp_client,
+            model,
+            rag_node=self._rag_node,
+            expert_config=self._expert_config,
         )
         LOGGER.info("LangGraph workflow initialized")
 
@@ -138,6 +147,8 @@ class LangGraphAgent(AbstractAgent):
                 "issues": [],
                 "current_expert_index": 0,
                 "expert_errors": [],
+                "failed_batches": [],
+                "expert_metadata": {},
             }
 
             # Execute workflow with optional Langfuse tracing
