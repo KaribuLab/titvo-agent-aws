@@ -21,18 +21,30 @@ class PromptRegistry:
 
     @cache
     def get_system_prompt(self) -> str:
-        """Load the main system prompt."""
+        """Load the common preamble (``system_prompt.md``).
+
+        Kept under its historical name for the legacy LangChain adapter; the
+        LangGraph experts receive it through :meth:`compose_expert_prompt`.
+        """
         return resources.read_text("code_analysis.prompts", "system_prompt.md")
+
+    def get_common_preamble(self) -> str:
+        """Common preamble prepended to every expert prompt."""
+        return self.get_system_prompt()
+
+    @cache
+    def compose_expert_prompt(self, expert_name: str) -> str:
+        """Return ``preamble + separator + expert prompt`` for *expert_name*."""
+        return (
+            self.get_common_preamble().rstrip()
+            + "\n\n---\n\n"
+            + self.get_expert_prompt(expert_name).lstrip()
+        )
 
     @cache
     def get_content_template(self) -> str:
         """Load the content template for user messages."""
         return resources.read_text("code_analysis.prompts", "content_template.md")
-
-    @cache
-    def get_orchestrator_prompt(self) -> str:
-        """Load the orchestrator node prompt for LangGraph."""
-        return resources.read_text("code_analysis.prompts", "orchestrator_prompt.md")
 
     @cache
     def get_findings_consolidation_prompt(self) -> str:
@@ -109,9 +121,14 @@ def get_content_template() -> str:
     return get_registry().get_content_template()
 
 
-def get_orchestrator_prompt() -> str:
-    """Load the orchestrator prompt."""
-    return get_registry().get_orchestrator_prompt()
+def get_common_preamble() -> str:
+    """Load the common preamble shared by every expert."""
+    return get_registry().get_common_preamble()
+
+
+def compose_expert_prompt(expert_name: str) -> str:
+    """Load the effective system prompt (preamble + domain) for an expert."""
+    return get_registry().compose_expert_prompt(expert_name)
 
 
 def get_findings_consolidation_prompt() -> str:

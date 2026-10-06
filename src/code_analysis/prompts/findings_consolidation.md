@@ -35,6 +35,11 @@ Reglas:
   representa. **Todo `id` de entrada debe aparecer en exactamente un `source_ids`.** Un hallazgo que
   no fusionas se devuelve igual, con su propio `id` en `source_ids`.
 - Usa la severidad más alta entre los hallazgos fusionados.
+- Los hallazgos cuyo título empieza con `Sospecha:` son sospechas no confirmadas. Conserva el
+  prefijo `Sospecha:` sólo si **todas** las fuentes fusionadas son sospechas; si una sospecha se
+  fusiona con un hallazgo confirmado, prevalece el título del confirmado (sin prefijo) y la
+  severidad máxima. Mantén la frase `Para confirmar:` en la descripción cuando el resultado siga
+  siendo una sospecha.
 - No inventes archivos, líneas, categorías ni fragmentos de código: `path`, `line`, `category` y
   `code` deben copiarse de alguno de los hallazgos listados en `source_ids`.
 - Combina contexto útil de expertos diferentes cuando mejora el feedback al usuario.

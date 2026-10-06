@@ -163,8 +163,14 @@ def add_headers(response):
 - Minor information leaks
 - Debug logging in production
 
-## False Positive Rules
+## Runtime-aware false positive rules
 
+The common preamble defines what counts as exposed for each `[runtime: …]` label. Apply it before these domain rules:
+
+- In `server`, `infra` and `config` code, references to secrets by name (`process.env.X`, `os.environ["X"]`) are NOT findings.
+- In `browser` and `mobile` code, every value in the file is public; an environment reference resolved at build time IS the exposed value.
+- Rate client-side credentials by what they grant (public widget identifier → LOW/`Sospecha:` MEDIUM; own backend → HIGH; signing key → CRITICAL).
+- In `test` runtime, secrets that look like placeholders (`test`, `dummy`, `example`, `sk-test-…`) → LOW; real-format secrets (AWS `AKIA…`, PEM keys, signed JWT) → treat as in `server`.
 - Static string literals with format placeholders → NOT injection
 - Prepared statements with parameterized queries → NOT vulnerable
 - Proper use of framework validation → NOT a finding

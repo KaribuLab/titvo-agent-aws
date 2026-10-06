@@ -28,6 +28,8 @@ class TestPromptRegistry:
         assert len(prompt) > 100
         assert "Titvo" in prompt
         assert "JSON" in prompt
+        assert "Security Boundary" in prompt
+        assert "Anti-Fabrication" in prompt
 
     def test_content_template_loads(self):
         """Content template should load successfully."""
@@ -36,11 +38,65 @@ class TestPromptRegistry:
         assert "{repository_url}" in template
         assert "{commit_hash}" in template
 
-    def test_orchestrator_prompt_loads(self):
-        """Orchestrator prompt should load successfully."""
-        prompt = prompts.get_orchestrator_prompt()
-        assert isinstance(prompt, str)
-        assert "orchestrator" in prompt.lower() or "MCP" in prompt
+    def test_orchestrator_prompt_is_gone(self):
+        """The dead orchestrator prompt was removed."""
+        assert not hasattr(prompts, "get_orchestrator_prompt")
+        assert not hasattr(PromptRegistry(), "get_orchestrator_prompt")
+        import importlib.resources as resources
+
+        assert (
+            not resources.files("code_analysis.prompts")
+            .joinpath("orchestrator_prompt.md")
+            .is_file()
+        )
+
+    def test_common_preamble_defines_runtime_and_suspicion_policy(self):
+        preamble = prompts.get_common_preamble()
+        assert preamble == prompts.get_system_prompt()
+        assert "[runtime:" in preamble
+        assert "browser" in preamble and "mobile" in preamble
+        assert "import.meta.env" in preamble
+        assert "Sospecha: " in preamble
+        assert "Para confirmar: " in preamble
+        assert "Autenticación basada en secretos del lado cliente" in preamble
+        assert "RAG CONTEXT" in preamble
+        # No legacy monolithic-flow fields.
+        assert "scaned_files" not in preamble
+
+    def test_compose_expert_prompt_is_preamble_plus_domain(self):
+        for name in prompts.list_experts():
+            composed = prompts.compose_expert_prompt(name)
+            preamble = prompts.get_common_preamble().rstrip()
+            expert = prompts.get_expert_prompt(name).lstrip()
+            assert composed.startswith(preamble)
+            assert composed.endswith(expert)
+            assert "\n\n---\n\n" in composed
+
+    def test_no_expert_keeps_absolute_env_var_exclusion(self):
+        for name in prompts.list_experts():
+            text = prompts.get_expert_prompt(name)
+            assert (
+                "Environment variable references for secrets → NOT a finding"
+                not in text
+            )
+            assert (
+                "Environment variable references or placeholder values → NOT a finding"
+                not in text
+            )
+
+    def test_client_side_experts_mention_runtime_and_client_auth(self):
+        for name in ("owasp_api", "owasp_web", "owasp_mobile"):
+            text = prompts.get_expert_prompt(name)
+            assert "[runtime:" in text, name
+            assert "Autenticación basada en secretos del lado cliente" in text, name
+        for name in ("code_vulnerabilities", "devsecops"):
+            assert "runtime" in prompts.get_expert_prompt(name).lower(), name
+
+    def test_consolidation_prompt_handles_suspicions(self):
+        prompt = prompts.get_findings_consolidation_prompt()
+        assert "Sospecha:" in prompt
+        assert "todas" in prompt
+        assert "Para confirmar:" in prompt
 
     def test_findings_consolidation_prompt_loads(self):
         """Findings consolidation prompt should load successfully."""

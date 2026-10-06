@@ -175,7 +175,7 @@ requests>=2.0.0  # Without lock file
 
 ## False Positive Rules
 
-- Environment variable syntax `${VAR}` → NOT a finding (value not in code)
+- Environment variable syntax `${VAR}` or `${{ secrets.X }}` in `infra`/`config` runtime → NOT a finding (value not in code). In `test` runtime, placeholder-looking secrets in fixtures → LOW; real-format secrets → CRITICAL as hardcoded credentials.
 - Terraform `variable` blocks without default → NOT a finding
 - Example/test configurations marked as such → Verify context
 

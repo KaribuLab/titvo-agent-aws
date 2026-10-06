@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,6 +51,17 @@ ENV_FILE_CAP = "TITVO_EXPERT_FILE_CAP_CHARS"
 ENV_BATCH_BUDGET = "TITVO_EXPERT_BATCH_BUDGET_CHARS"
 ENV_CHUNK_OVERLAP = "TITVO_EXPERT_CHUNK_OVERLAP_CHARS"
 ENV_MAX_CONCURRENCY = "TITVO_EXPERT_MAX_CONCURRENCY"
+
+SUSPICION_PREFIX = "sospecha:"
+SUSPICION_MAX_SEVERITY = "MEDIUM"
+_SEVERITY_RANK = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+
+def is_suspicion_title(title: str | None) -> bool:
+    """True when *title* starts with ``Sospecha:`` (case/accent insensitive)."""
+    normalized = unicodedata.normalize("NFKD", str(title or ""))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return normalized.strip().casefold().startswith(SUSPICION_PREFIX)
 
 
 @dataclass
@@ -198,7 +210,7 @@ class BaseExpertNode(ABC):
             rag_content = self._format_rag_chunks(
                 self._select_rag_chunks(state.get("rag_chunks", []) or [], profile)
             )
-            expert_prompt = prompt_registry.get_expert_prompt(self.expert_name)
+            expert_prompt = prompt_registry.compose_expert_prompt(self.expert_name)
 
             LOGGER.info(
                 "%s running %d batches over %d chunks",
@@ -449,6 +461,7 @@ class BaseExpertNode(ABC):
                 "batch_index": batch.index,
                 "chunk_index": chunk.chunk_index if chunk is not None else 0,
             }
+            self._cap_suspicion_severity(issue)
             issues.append(issue)
 
         return ExpertResult(
@@ -456,6 +469,24 @@ class BaseExpertNode(ABC):
             issues=issues,
             files_analyzed=len(batch.paths),
         )
+
+    def _cap_suspicion_severity(self, issue: ExpertIssue) -> None:
+        """Suspicions (``Sospecha:`` titles) are MEDIUM at most, by construction."""
+        if not is_suspicion_title(issue.title):
+            return
+        if (
+            _SEVERITY_RANK.get(issue.severity, 0)
+            > _SEVERITY_RANK[SUSPICION_MAX_SEVERITY]
+        ):
+            LOGGER.info(
+                "%s capped suspicion severity %s -> %s: %s",
+                self.expert_name,
+                issue.severity,
+                SUSPICION_MAX_SEVERITY,
+                issue.title[:80],
+            )
+            issue.severity = SUSPICION_MAX_SEVERITY
+            issue.metadata["severity_capped"] = True
 
     @staticmethod
     def _resolve_chunk(issue: ExpertIssue, batch: Batch) -> Chunk | None:

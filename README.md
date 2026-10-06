@@ -50,6 +50,17 @@ mcp_retrieve → [rag_retrieve] → classify_runtime → 6 expertos en paralelo 
   invente o rebaje un hallazgo. Si hubo lotes fallidos el resultado incluye `incomplete` y el
   status nunca es `COMPLETED`; el reporte HTML muestra un banner de análisis incompleto.
 
+### Prompts
+
+El `SystemMessage` de cada experto se compone en tiempo de ejecución como
+`prompts/system_prompt.md` (preámbulo común) + `prompts/experts/<experto>.md` (dominio). El
+preámbulo define el **security boundary**, las reglas de confianza por `[runtime: …]` (en
+`browser`/`mobile` todo valor del código es público, incluidas variables de entorno resueltas en
+build), la detección de **autenticación basada en secretos del lado cliente** y la **política de
+sospechas**: hallazgos no confirmables se reportan igual con título `Sospecha: …`, severidad
+MEDIUM máximo (garantizado por código en `BaseExpertNode`) y una frase `Para confirmar: …` con la
+verificación concreta.
+
 ### Variables de entorno de los expertos
 
 | Variable | Default | Descripción |

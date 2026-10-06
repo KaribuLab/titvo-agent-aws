@@ -10,6 +10,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langfuse.langchain import CallbackHandler
 
+from code_analysis import prompts as prompt_registry
 from code_analysis.domain.ports.ia_agent import (
     AbstractAgent,
     AgentMessage,
@@ -41,7 +42,6 @@ class LangGraphAgent(AbstractAgent):
 
     def __init__(
         self,
-        system_prompt: str,
         model_factory: AgentModelFactory[BaseChatModel],
         tools_factory: AsyncAgentToolsFactory,
         langfuse_callback_handler: CallbackHandler | None = None,
@@ -49,7 +49,12 @@ class LangGraphAgent(AbstractAgent):
         rag_node: RagRetrievalNode | None = None,
         expert_config: ExpertRuntimeConfig | None = None,
     ):
-        super().__init__(system_prompt, model_factory, tools_factory)
+        # Experts compose their own system message (common preamble + domain
+        # prompt via PromptRegistry); the base-class slot keeps the preamble
+        # only for introspection.
+        super().__init__(
+            prompt_registry.get_common_preamble(), model_factory, tools_factory
+        )
         self._langfuse_handler = langfuse_callback_handler
         self._langfuse_metadata = langfuse_metadata or {}
         self._rag_node = rag_node

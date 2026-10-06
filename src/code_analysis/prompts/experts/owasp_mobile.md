@@ -67,10 +67,32 @@ await prefs.setString('refresh_token', refreshToken);
 await AsyncStorage.setItem('access_token', token);
 ```
 
+### Client-side secret based authentication (MASVS-AUTH / MASVS-CRYPTO, M1, M10)
+
+The app binary is public. Report requests whose only authentication is material present in the app:
+
+```kotlin
+// CRITICAL: HMAC key embedded in the app used to sign API requests
+val signature = hmacSha256(BuildConfig.SIGNING_KEY, body)
+
+// HIGH: static app token as the only credential; no user session token accompanies the request
+request.addHeader("Authorization", "Bearer ${BuildConfig.API_TOKEN}")
+
+// HIGH: token in SharedPreferences / UserDefaults / AsyncStorage as the only credential for user-scoped resources
+val token = prefs.getString("api_key", "")
+```
+
+```javascript
+// React Native — HIGH: EXPO_PUBLIC_* / react-native-config values are shipped in the bundle
+headers: { 'X-Api-Key': process.env.EXPO_PUBLIC_API_KEY }
+```
+
+Title: "Autenticación basada en secretos del lado cliente". Rate public third-party identifiers (push, analytics, maps keys) as LOW or `Sospecha:` MEDIUM asking to verify restrictions at the provider.
+
 ## Severity Guidelines
 
 **CRITICAL:**
-- Hardcoded production credentials, API keys, or cryptographic keys with actual values visible.
+- Hardcoded production credentials, API keys, or cryptographic keys with actual values visible, including values injected at build time (`BuildConfig`, `.xcconfig`, `EXPO_PUBLIC_*`) when they grant backend or signing capabilities.
 - TLS validation fully disabled or trust-all certificate logic in production paths.
 - Exported mobile component enabling unauthorized access to sensitive functionality with clear evidence.
 
@@ -91,9 +113,14 @@ await AsyncStorage.setItem('access_token', token);
 - Minor hardening gaps without direct sensitive data exposure.
 - Missing resilience controls when no explicit sensitive or high-risk flow is visible.
 
-## False Positive Rules
+## Runtime-aware false positive rules
 
-- Environment variable references or placeholder values → NOT a finding.
+The common preamble defines what counts as exposed for each `[runtime: …]` label. Apply it before these domain rules:
+
+- In `server`, `infra` and `config` code, references to secrets by name (`process.env.X`, `os.environ["X"]`) are NOT findings.
+- In `browser` and `mobile` code, every value in the file is public; an environment reference resolved at build time IS the exposed value.
+- Rate client-side credentials by what they grant (public widget identifier → LOW/`Sospecha:` MEDIUM; own backend → HIGH; signing key → CRITICAL).
+- Placeholder values (`your-api-key`, `xxx`, `changeme`) → NOT a finding.
 - Test fixtures, sample apps, or clearly marked demo code → LOW at most unless production usage is visible.
 - Use of Keychain, Android Keystore, EncryptedSharedPreferences, SecureStore, or secure storage wrappers → NOT insecure unless misuse is visible.
 - HTTPS URLs alone → NOT a finding.

@@ -107,8 +107,8 @@ async def create_langgraph_agent(
     """Create LangGraph agent with expert nodes."""
     LOGGER.info("Using LANGGRAPH agent mode (LangGraphAgent with expert nodes)")
 
-    # Load prompts from registry (embedded in code)
-    system_prompt = prompt_registry.get_system_prompt()
+    # Load prompts from registry (embedded in code). Expert system messages are
+    # composed inside the LangGraph nodes (common preamble + domain prompt).
     content_template = prompt_registry.get_content_template()
 
     model_factory = LangchainAgentModelFactory(
@@ -130,7 +130,6 @@ async def create_langgraph_agent(
     expert_config = ExpertRuntimeConfig.from_env()
     LOGGER.info("Expert runtime config: %s", expert_config.to_dict())
     agent = LangGraphAgent(
-        system_prompt=system_prompt,
         model_factory=model_factory,
         tools_factory=tools_factory,
         langfuse_callback_handler=langfuse_handler,

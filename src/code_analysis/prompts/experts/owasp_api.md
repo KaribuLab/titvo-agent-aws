@@ -56,6 +56,31 @@ def fetch_webhook(url):
     requests.get(url)  # No whitelist, can access internal services
 ```
 
+### Client-side authentication (files with `[runtime: browser]` or `[runtime: mobile]`)
+
+The frontend HTTP client is direct evidence of how the API is authenticated. Report these even when the server is not in the repository (API2:2023 Broken Authentication, API5:2023 Broken Function Level Authorization, API8:2023 Security Misconfiguration):
+
+```javascript
+// HIGH: static application token as the only credential — anyone can extract and reuse it
+fetch(`${API}/claims`, { headers: { Authorization: `Bearer ${import.meta.env.VITE_API_TOKEN}` } })
+
+// CRITICAL: request signature computed in the browser with a key shipped in the bundle
+const sig = hmacSha256(SIGNING_KEY, `${Date.now()}${body}`);
+fetch(url, { headers: { 'X-Signature': sig, 'X-Timestamp': Date.now() } })
+
+// HIGH: no user-bound credential at all (no cookie, no login bearer) on a user-scoped resource
+fetch(`${API}/users/${id}/documents`, { headers: { 'X-Api-Key': APP_KEY } })
+
+// MEDIUM: client-generated timestamp used as nonce — replayable, server cannot bind it to a session
+headers: { 'X-Nonce': String(Date.now()) }
+
+// OK: user-bound credential present → not this finding
+fetch(url, { credentials: 'include' })
+fetch(url, { headers: { Authorization: `Bearer ${session.accessToken}` } })  // obtained after login
+```
+
+Title for the pattern: "Autenticación basada en secretos del lado cliente". In the description say which server-side check must exist (a session or user-bound token) and that it could not be verified from this repository.
+
 ## Severity Guidelines
 
 **CRITICAL:**
@@ -76,10 +101,14 @@ def fetch_webhook(url):
 - Missing security headers specific to APIs
 - Version disclosure in API responses
 
-## False Positive Rules
+## Runtime-aware false positive rules
 
+The common preamble defines what counts as exposed for each `[runtime: …]` label. Apply it before these domain rules:
+
+- In `server`, `infra` and `config` code, references to secrets by name (`process.env.X`, `os.environ["X"]`) are NOT findings.
+- In `browser` and `mobile` code, every value in the file is public; an environment reference resolved at build time IS the exposed value.
+- Rate client-side credentials by what they grant (public widget identifier → LOW/`Sospecha:` MEDIUM; own backend → HIGH; signing key → CRITICAL).
 - Generic route definitions without implementation details → LOW at most
-- Environment variable references for secrets → NOT a finding
 - Standard HTTP methods (GET, POST, PUT, DELETE) → NOT inherently vulnerable
 
 ## Output Format

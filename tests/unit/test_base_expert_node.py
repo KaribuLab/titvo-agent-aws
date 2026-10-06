@@ -16,6 +16,7 @@ from code_analysis.domain.services.batch_planner import plan_files
 from code_analysis.infra.adapters.langgraph.nodes import base_expert_node as mod
 from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
     ExpertRuntimeConfig,
+    is_suspicion_title,
 )
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
     CodeVulnerabilitiesNode,
@@ -316,3 +317,69 @@ class TestExpertRuntimeConfig:
         assert config.batch_budget_chars == 150_000
         assert config.chunk_overlap_chars == 5_000
         assert config.max_concurrency == 4
+
+
+class TestSuspicionSeverityCap:
+    def _parse(self, title: str, severity: str):
+        node = OwaspApiNode(None)
+        batch = plan_files([_file("a.ts", "x\n", ("browser",))])[0]
+        issue = {**_issue_json("a.ts", 1, title=title), "severity": severity}
+        return node._parse_response(json.dumps({"issues": [issue]}), batch).issues[0]
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Sospecha: token expuesto",
+            "sospecha: token expuesto",
+            "SOSPECHA: token expuesto",
+            "  Sospecha:   token",
+            "Sospécha: token",  # accent-insensitive
+        ],
+    )
+    def test_high_suspicion_is_capped_to_medium(self, title):
+        issue = self._parse(title, "HIGH")
+        assert issue.severity == "MEDIUM"
+        assert issue.metadata["severity_capped"] is True
+
+    def test_critical_suspicion_is_capped_to_medium(self):
+        issue = self._parse("Sospecha: clave", "CRITICAL")
+        assert issue.severity == "MEDIUM"
+        assert issue.metadata["severity_capped"] is True
+
+    def test_low_suspicion_is_untouched(self):
+        issue = self._parse("Sospecha: menor", "LOW")
+        assert issue.severity == "LOW"
+        assert "severity_capped" not in issue.metadata
+
+    def test_confirmed_high_is_untouched(self):
+        issue = self._parse("Token expuesto", "HIGH")
+        assert issue.severity == "HIGH"
+        assert "severity_capped" not in issue.metadata
+
+    def test_prefix_inside_title_does_not_count(self):
+        issue = self._parse("Token con Sospecha: algo", "HIGH")
+        assert issue.severity == "HIGH"
+
+    def test_is_suspicion_title_helper(self):
+        assert is_suspicion_title("Sospecha: x")
+        assert not is_suspicion_title("Sospechoso: x")
+        assert not is_suspicion_title(None)
+
+
+class TestComposedSystemMessage:
+    @pytest.mark.asyncio
+    async def test_expert_system_message_starts_with_preamble(self):
+        from code_analysis import prompts
+
+        captured = {}
+
+        async def _ainvoke(messages):
+            captured["system"] = messages[0].content
+            return _response([])
+
+        model = MagicMock()
+        model.ainvoke = _ainvoke
+        await OwaspApiNode(model)({"files": [_file("a.py", "x")], "issues": []})
+
+        assert captured["system"].startswith(prompts.get_common_preamble().rstrip())
+        assert "OWASP API Security Expert" in captured["system"]
