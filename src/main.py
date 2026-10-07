@@ -14,7 +14,10 @@ from langfuse.langchain import CallbackHandler
 
 from code_analysis import prompts as prompt_registry
 from code_analysis.application.analyse_code_use_case import AnalyseCodeUseCase
+from code_analysis.domain.entities.task_entity import TaskSource
 from code_analysis.domain.notification_service import NotificationService
+from code_analysis.domain.ports.ia_agent import AsyncAgentToolsFactory
+from code_analysis.infra.adapters.cli_snapshot import CliSnapshotRepository
 from code_analysis.infra.adapters.dynamo_task_repository import DynamoTaskRepository
 from code_analysis.infra.adapters.lambda_bitbucket_repository import (
     LambdaBitbucketRepository,
@@ -31,6 +34,9 @@ from code_analysis.infra.adapters.langchain_agent_adapter import (
 )
 from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
     ExpertRuntimeConfig,
+)
+from code_analysis.infra.adapters.langgraph.nodes.cli_retrieval_node import (
+    CliRetrievalNode,
 )
 from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
     RagRetrievalNode,
@@ -94,6 +100,14 @@ def create_boto3_client(service_name: str) -> Any:
     return boto3.client(service_name)
 
 
+class NoToolsFactory(AsyncAgentToolsFactory):
+    """CLI snapshots do not require an MCP network connection."""
+
+    async def create_tools(self):
+        """Return no external tools for uploaded snapshots."""
+        return []
+
+
 async def create_langgraph_agent(
     ai_provider: str,
     ai_model: str,
@@ -103,6 +117,7 @@ async def create_langgraph_agent(
     langfuse_metadata: Optional[dict[str, Any]],
     rag_node: Optional[RagRetrievalNode] = None,
     ai_base_url: Optional[str] = None,
+    retrieval_node: Optional[CliRetrievalNode] = None,
 ):
     """Create LangGraph agent with expert nodes."""
     LOGGER.info("Using LANGGRAPH agent mode (LangGraphAgent with expert nodes)")
@@ -117,16 +132,19 @@ async def create_langgraph_agent(
         ai_api_key=ai_api_key,
         ai_base_url=ai_base_url,
     )
-    tools_factory = AsyncMCPToolsFactory(
-        mcp_client=MultiServerMCPClient(
-            {
-                "titvo-mcp-server": {
-                    "transport": "streamable_http",
-                    "url": mcp_server_url,
-                },
-            }
-        ),
-    )
+    if retrieval_node is not None:
+        tools_factory = NoToolsFactory()
+    else:
+        tools_factory = AsyncMCPToolsFactory(
+            mcp_client=MultiServerMCPClient(
+                {
+                    "titvo-mcp-server": {
+                        "transport": "streamable_http",
+                        "url": mcp_server_url,
+                    }
+                }
+            ),
+        )
     expert_config = ExpertRuntimeConfig.from_env()
     LOGGER.info("Expert runtime config: %s", expert_config.to_dict())
     agent = LangGraphAgent(
@@ -136,6 +154,10 @@ async def create_langgraph_agent(
         langfuse_metadata=langfuse_metadata,
         rag_node=rag_node,
         expert_config=expert_config,
+        retrieval_node=retrieval_node,
+        usage_provider=ai_provider,
+        usage_model=ai_model,
+        usage_base_url=ai_base_url,
     )
     return agent, content_template
 
@@ -185,9 +207,16 @@ async def main():
             ),
         ),
     )
+    task_repository = DynamoTaskRepository(
+        dynamo_client=create_boto3_client("dynamodb"),
+        table_name=task_table_name,
+    )
+
+    task = task_repository.get_task(task_id)
+    cli_source = task.source == TaskSource.CLI
     mcp_server_url = configuration_provider.get_value("mcp_server_url")
     LOGGER.debug("MCP server url %s", mcp_server_url)
-    if mcp_server_url is None:
+    if mcp_server_url is None and not cli_source:
         raise ValueError("mcp_server_url is not set")
     # Note: scan_system_prompt and content_template now loaded from embedded code
     # No longer read from DynamoDB
@@ -204,10 +233,22 @@ async def main():
         raise ValueError("ai_api_key is not set")
     ai_base_url = configuration_provider.get_value("ai_base_url")
     LOGGER.debug("AI base url %s", ai_base_url)
-    task_repository = DynamoTaskRepository(
-        dynamo_client=create_boto3_client("dynamodb"),
-        table_name=task_table_name,
-    )
+    retrieval_node = None
+    if cli_source:
+        cli_bucket = os.getenv(
+            "TITVO_DYNAMO_CLI_FILES_BUCKET_NAME"
+        ) or configuration_provider.get_value("cli_files_bucket_name")
+        cli_table = os.getenv("TITVO_DYNAMO_CLI_FILES_TABLE_NAME")
+        if not cli_bucket or not cli_table:
+            raise ValueError("CLI files bucket and table must be configured")
+        retrieval_node = CliRetrievalNode(
+            CliSnapshotRepository(
+                create_boto3_client("s3"),
+                create_boto3_client("dynamodb"),
+                cli_bucket,
+                cli_table,
+            )
+        )
 
     # Setup Langfuse
     langfuse_public_key = configuration_provider.get_secret("langfuse_public_key")
@@ -237,7 +278,8 @@ async def main():
     embedding_api_key = configuration_provider.get_secret("embedding_api_key")
     rag_node: Optional[RagRetrievalNode] = None
     if (
-        rag_indexer_bucket
+        not cli_source
+        and rag_indexer_bucket
         and embedding_provider
         and embedding_model
         and embedding_api_key
@@ -266,6 +308,7 @@ async def main():
         langfuse_metadata=langfuse_metadata,
         rag_node=rag_node,
         ai_base_url=ai_base_url,
+        retrieval_node=retrieval_node,
     )
 
     notification_service = NotificationService(
@@ -280,8 +323,8 @@ async def main():
         ),
     )
 
-    rag_index_status = create_s3_rag_index_status_adapter()
-    rag_indexer_trigger = create_rag_indexer_batch_trigger()
+    rag_index_status = None if cli_source else create_s3_rag_index_status_adapter()
+    rag_indexer_trigger = None if cli_source else create_rag_indexer_batch_trigger()
 
     analyse_code_use_case = AnalyseCodeUseCase(
         task_repository=task_repository,

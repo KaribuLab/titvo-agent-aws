@@ -1,9 +1,10 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 from code_analysis.domain.dto.result_dto import AnalysisStatus, ResultDto
-from code_analysis.domain.entities.task_entity import Task
+from code_analysis.domain.entities.task_entity import Task, TaskSource
 from code_analysis.domain.notification_service import NotificationService
 from code_analysis.domain.ports.ia_agent import AbstractAgent, AgentMessage
 from code_analysis.domain.ports.rag_index_status_port import IRagIndexStatusPort
@@ -36,8 +37,8 @@ class AnalyseCodeUseCase:
         agent: AbstractAgent,
         notification_service: NotificationService,
         content_template: str,
-        rag_index_status: IRagIndexStatusPort,
-        rag_indexer_trigger: RagIndexerBatchTrigger,
+        rag_index_status: IRagIndexStatusPort | None,
+        rag_indexer_trigger: RagIndexerBatchTrigger | None,
     ):
         self.task_repository = task_repository
         self.agent = agent
@@ -83,6 +84,8 @@ class AnalyseCodeUseCase:
 
         Blocks until the indexing job completes or raises on failure/timeout.
         """
+        if self.rag_index_status is None or self.rag_indexer_trigger is None:
+            raise ValueError("Git scans require RAG configuration")
         if self.rag_index_status.is_indexed(repo_url, branch):
             LOGGER.info("RAG index already available for %s@%s", repo_url, branch)
             return
@@ -193,9 +196,10 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Marking task %s as in progress", task_id)
 
         scan_mode = self._normalize_scan_mode(task.args.get("scan_mode"))
-        await self._ensure_rag_index(
-            task.repository_url, task.branch, task.commit_hash, scan_mode
-        )
+        if task.source != TaskSource.CLI:
+            await self._ensure_rag_index(
+                task.repository_url, task.branch, task.commit_hash, scan_mode
+            )
 
         analysis_args = {**task.args, "scan_mode": scan_mode}
         content_args = ""
@@ -210,6 +214,11 @@ class AnalyseCodeUseCase:
             f"Note: The codebase for branch `{task.branch}` is indexed as background "
             "context. The selected analysis files are retrieved via MCP tools."
         )
+
+        if task.source == TaskSource.CLI:
+            rag_context = (
+                "CLI snapshot: RAG disabled; analyze uploaded working-tree files only."
+            )
 
         message = AgentMessage(
             role="user",
@@ -229,12 +238,20 @@ class AnalyseCodeUseCase:
                 "scan_mode": scan_mode,
                 "scan_ref": task.branch,
                 "extra_args": analysis_args,
+                "created_at": created.isoformat()
+                if isinstance(created := getattr(task, "created_at", None), datetime)
+                else created
+                if isinstance(created, str)
+                else None,
             },
         )
         LOGGER.debug("Sending message to agent: %s", message.content)
         agent_response = await self.agent.invoke(message)
         LOGGER.debug("Agent response: %s", agent_response.content)
-        self._trigger_delta_indexing(task.repository_url, task.branch, task.commit_hash)
+        if task.source != TaskSource.CLI:
+            self._trigger_delta_indexing(
+                task.repository_url, task.branch, task.commit_hash
+            )
         agent_response.content = self.__sanitize_content_response(
             agent_response.content
         )
@@ -243,13 +260,20 @@ class AnalyseCodeUseCase:
         LOGGER.info("Result: %s", result)
         result_dto = ResultDto(
             **{
-                **result,
+                **{
+                    key: value
+                    for key, value in result.items()
+                    if key
+                    in {"status", "scaned_files", "issues", "error", "incomplete"}
+                },
                 "source": task.source.value,
                 "args": task.args,
                 "commit_hash": task.commit_hash,
             }
         )
         notifications_results = self.notification_service.send_notifications(result_dto)
+        # Keep counts in DynamoDB while the existing HTML report holds findings.
+        result["issues_count"] = len(result.get("issues", []))
         # Remove issues from result if exists
         if "issues" in result:
             result.pop("issues")

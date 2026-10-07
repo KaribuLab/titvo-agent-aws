@@ -87,9 +87,10 @@ class TestMCPRetrievalNode:
         }
 
         assert node._extract_storage_prefix(payload) == "full/job-1"
-        assert node._normalize_storage_path(
-            "full/job-1/src/app.py", "full/job-1"
-        ) == "src/app.py"
+        assert (
+            node._normalize_storage_path("full/job-1/src/app.py", "full/job-1")
+            == "src/app.py"
+        )
 
     @pytest.mark.asyncio
     async def test_full_scan_invokes_mcp_with_scan_mode_and_normalizes_paths(self):
@@ -138,9 +139,7 @@ class TestMCPRetrievalNode:
                 "branch": "main",
             }
         )
-        files_tool.ainvoke.assert_awaited_once_with(
-            {"path": "full/job-1/src/app.py"}
-        )
+        files_tool.ainvoke.assert_awaited_once_with({"path": "full/job-1/src/app.py"})
         assert result["files"] == [{"path": "src/app.py", "content": "print('hello')"}]
 
     @pytest.mark.asyncio
@@ -198,9 +197,7 @@ class TestMCPRetrievalNode:
         files_tool.ainvoke = AsyncMock(return_value={})
 
         client = MagicMock()
-        client.get_tools = AsyncMock(
-            return_value=[git_tool, poll_tool, files_tool]
-        )
+        client.get_tools = AsyncMock(return_value=[git_tool, poll_tool, files_tool])
 
         node = MCPRetrievalNode(client)
         result = await node(
@@ -666,9 +663,7 @@ class TestMergeFindingsNode:
         assert "JSON estricto" in repair_prompt
         assert "No cambies el contenido semántico" in repair_prompt
 
-    def test_findings_consolidation_parse_warning_logs_redacted_preview(
-        self, caplog
-    ):
+    def test_findings_consolidation_parse_warning_logs_redacted_preview(self, caplog):
         """Parse failures should show response shape without raw code snippets."""
         from code_analysis.domain.entities.expert_result import ExpertIssue
 
@@ -848,7 +843,7 @@ class TestMergeFindingsNode:
                 '{"issues":[{"source_ids":[0,1],'
                 '"title":"Tokens OAuth en localStorage (web)",'
                 '"description":"Los expertos web y mobile detectaron que los '
-                'tokens OAuth se persisten en localStorage, lo que aumenta el '
+                "tokens OAuth se persisten en localStorage, lo que aumenta el "
                 'impacto de XSS y permite secuestro de sesión.",'
                 '"severity":"HIGH","category":"Insecure Token Storage",'
                 '"path":"services/auth/tokenStorage.ts","line":16,'
@@ -856,7 +851,7 @@ class TestMergeFindingsNode:
                 '"code":"window.localStorage.setItem(KEYS.ACCESS, '
                 'tokens.accessToken);",'
                 '"recommendation":"Usar cookies HttpOnly, Secure y SameSite o '
-                'sesiones backend; si se mantiene SPA, reducir vida útil y '
+                "sesiones backend; si se mantiene SPA, reducir vida útil y "
                 'reforzar CSP."}]}'
             )
         )

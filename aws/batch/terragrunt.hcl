@@ -89,6 +89,14 @@ inputs = {
   vpc_id             = dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc/vpc_id"]
   job_environment = [
     {
+      name  = "TITVO_DYNAMO_CLI_FILES_TABLE_NAME"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/cli-files-table-name"]
+    },
+    {
+      name  = "TITVO_DYNAMO_CLI_FILES_BUCKET_NAME"
+      value = dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_name"]
+    },
+    {
       name : "TITVO_DYNAMO_TASK_TABLE_NAME",
       value : dependency.parameters.outputs.parameters["${local.base_path}/infra/dynamo/task-table-name"]
     },

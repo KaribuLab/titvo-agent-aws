@@ -34,7 +34,9 @@ _ISSUE = {
     "recommendation": "Do not print secrets to stdout.",
 }
 _EXPERT_RESPONSE = json.dumps({"issues": [_ISSUE]})
-_CONSOLIDATED_RESPONSE = json.dumps({"issues": [_ISSUE]})
+_CONSOLIDATED_RESPONSE = json.dumps(
+    {"issues": [{**_ISSUE, "source_ids": list(range(6))}]}
+)
 
 
 class _CannedModel:

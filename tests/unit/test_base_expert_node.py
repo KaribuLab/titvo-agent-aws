@@ -185,7 +185,7 @@ class TestBatchesAndConcurrency:
         model = MagicMock()
         model.ainvoke = AsyncMock(return_value=_response([_issue_json("a.py", 3)]))
         node = OwaspApiNode(model)
-        result = await node({"files": [_file("a.py", "x")], "issues": []})
+        result = await node({"files": [_file("a.py", "x\nx\nx\n")], "issues": []})
         assert result["issues"][0].metadata == {
             "expert": "owasp_api",
             "batch_index": 0,
@@ -220,7 +220,7 @@ class TestFailedBatches:
         assert failed["paths"] == [f"f{i:02d}.py" for i in range(10, 20)]
         assert "provider down" in failed["error"]
         assert result["expert_errors"] == [
-            "code_vulnerabilities: batch 1 failed: provider down"
+            "code_vulnerabilities: batch 2 failed: provider down"
         ]
         assert result["expert_metadata"]["code_vulnerabilities"]["failed_batches"] == 1
 

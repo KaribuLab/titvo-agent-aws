@@ -226,3 +226,44 @@ async def test_execute_mcp_error_marks_task_failed_instead_of_crashing():
 
     task.mark_failed.assert_called_once()
     assert task.mark_failed.call_args.args[0]["error"] == "No files in commit"
+
+
+@pytest.mark.asyncio
+async def test_cli_bypasses_git_rag_and_keeps_coverage():
+    """Uploaded working-tree snapshots must not consult a remote Git index."""
+    from datetime import datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from code_analysis.domain.entities.task_entity import Task, TaskSource, TaskStatus
+
+    use_case = _make_use_case(MagicMock(), MagicMock())
+    task = Task(
+        id="cli",
+        result={},
+        args={
+            "repository_url": "https://example.org/project",
+            "commit_hash": "snapshot",
+            "scan_mode": "full",
+            "batch_id": "batch",
+        },
+        hint_id="project",
+        scaned_files=0,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        status=TaskStatus.PENDING,
+        source=TaskSource.CLI,
+        branch="working-tree",
+    )
+    use_case.task_repository.get_task.return_value = task
+    use_case.agent.invoke = AsyncMock(
+        return_value=SimpleNamespace(
+            content='{"status":"COMPLETED","scaned_files":1,"issues":[],"coverage":{"complete":true}}'
+        )
+    )
+    use_case.notification_service.send_notifications.return_value = {}
+    await use_case.execute("cli")
+    use_case.rag_index_status.is_indexed.assert_not_called()
+    use_case.rag_indexer_trigger.trigger_full.assert_not_called()
+    use_case.rag_indexer_trigger.trigger_delta.assert_not_called()
+    assert task.result["coverage"]["complete"]
