@@ -179,8 +179,8 @@ usan tarifas estándar automáticamente. Las tarifas pueden configurarse con
 
 La definición AWS Batch añade bucket/tabla CLI mediante los parámetros SSM
 existentes. Las tareas Git conservan MCP/RAG y el pipeline `main` de despliegue
-continúa igual. Integrar esta rama y `titvo-admin-bff-aws/codex/scan-execution-summary`
-antes de `titvo-admin-web/codex/scan-dashboard`. Para probar sin desplegar AWS,
+continúa igual. Integrar esta rama y `titvo-admin-bff-aws/feat/scan-execution-summary`
+antes de `titvo-admin-web/feat/scan-dashboard`. Para probar sin desplegar AWS,
 consultar `titvo-dev/tools/cli/README.md` y sus ramas de laboratorio.
 
 Validación: 345 pruebas unitarias con Python 3.13 y `uv.lock` en Docker;
