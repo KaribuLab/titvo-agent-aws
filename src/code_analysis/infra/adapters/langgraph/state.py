@@ -23,6 +23,11 @@ def merge_dicts(left: dict[str, Any] | None, right: dict[str, Any] | None) -> di
     return merged
 
 
+def keep_first(left: str | None, right: str | None) -> str | None:
+    """Reducer for ``provider_error``: the first non-empty value wins."""
+    return left if left else right
+
+
 class AgentState(TypedDict):
     """State object passed between LangGraph nodes."""
 
@@ -49,6 +54,9 @@ class AgentState(TypedDict):
     expert_errors: Annotated[list[str], operator.add]
     failed_batches: Annotated[list[dict[str, Any]], operator.add]
     expert_metadata: Annotated[dict[str, Any], merge_dicts]
+    # Set by any expert that saw the provider breaker open (no credits, bad
+    # key...). Makes `merge` end the scan as FAILED with an explicit error.
+    provider_error: Annotated[str | None, keep_first]
 
     # Kept for backwards compatibility with older callers; unused.
     current_expert_index: NotRequired[int]

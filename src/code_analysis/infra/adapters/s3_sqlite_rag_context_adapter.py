@@ -16,6 +16,7 @@ import botocore.exceptions
 from langchain_openai import OpenAIEmbeddings
 
 from code_analysis.domain.ports.rag_context_port import IRagContextPort
+from code_analysis.infra.adapters.llm_errors import ErrorClass, classify, describe
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class S3SqliteRagContextAdapter(IRagContextPort):
         self._branch: str | None = None
         self._db_path: str | None = None
         self._embeddings: OpenAIEmbeddings | None = None
+        # Set when the embedding provider rejected us for the whole scan (no
+        # credits, bad key). Cleared by configure() at the start of each scan.
+        self._embeddings_disabled_reason: str | None = None
 
     # ------------------------------------------------------------------
     # IRagContextPort
@@ -58,6 +62,7 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             self.close()
         self._repository_url = repository_url
         self._branch = branch
+        self._embeddings_disabled_reason = None
 
     def search(self, query: str, k: int) -> list[dict[str, Any]]:
         """Search for k most similar chunks. Returns [] on any error."""
@@ -147,6 +152,13 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             )
             return None
 
+        if self._embeddings_disabled_reason:
+            LOGGER.debug(
+                "Embedding provider disabled for this scan (%s) — skipping RAG",
+                self._embeddings_disabled_reason,
+            )
+            return None
+
         try:
             if self._embeddings is None:
                 self._embeddings = OpenAIEmbeddings(
@@ -155,7 +167,15 @@ class S3SqliteRagContextAdapter(IRagContextPort):
                 )
             result = self._embeddings.embed_documents([text])
             return result[0] if result else None
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            if classify(exc) is ErrorClass.FATAL:
+                self._embeddings_disabled_reason = describe(exc)
+                LOGGER.warning(
+                    "Embedding provider rejected the request (%s) — RAG enrichment "
+                    "disabled for the rest of this scan",
+                    self._embeddings_disabled_reason,
+                )
+                return None
             LOGGER.warning(
                 "Embedding generation failed — skipping RAG enrichment", exc_info=True
             )

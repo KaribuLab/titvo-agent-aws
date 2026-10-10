@@ -4,7 +4,9 @@ Each expert:
 1. Selects files whose ``runtimes`` intersect its own runtime set (no fallback).
 2. Splits them into chunks (large files) and packs the chunks into batches.
 3. Runs one LLM call per batch, concurrently under a shared semaphore, with
-   retries on provider errors.
+   retries on transient provider errors. A non-retryable provider error (no
+   credits, bad key) opens a breaker shared by every expert: the remaining
+   batches are aborted without calling the provider.
 4. Parses every batch into ``ExpertIssue`` objects, mapping chunk-relative
    line numbers back to the original file.
 5. Returns only its delta: issues, errors, failed batches and metadata.
@@ -46,6 +48,13 @@ from code_analysis.infra.adapters.langgraph.nodes.expert_response import (
     validate_repair,
 )
 from code_analysis.infra.adapters.langgraph.state import AgentState
+from code_analysis.infra.adapters.llm_errors import (
+    ErrorClass,
+    ProviderCircuitBreaker,
+    ProviderUnavailableError,
+    classify,
+    describe,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,12 +92,22 @@ class ExpertRuntimeConfig:
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS
     _semaphore: asyncio.Semaphore | None = field(default=None, init=False, repr=False)
+    _breaker: ProviderCircuitBreaker | None = field(
+        default=None, init=False, repr=False
+    )
 
     @property
     def semaphore(self) -> asyncio.Semaphore:
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(max(1, self.max_concurrency))
         return self._semaphore
+
+    @property
+    def breaker(self) -> ProviderCircuitBreaker:
+        """Breaker shared by every expert built with this config."""
+        if self._breaker is None:
+            self._breaker = ProviderCircuitBreaker()
+        return self._breaker
 
     @classmethod
     def from_env(cls) -> "ExpertRuntimeConfig":
@@ -138,6 +157,7 @@ class _BatchOutcome:
     repair_attempted: bool = False
     repaired: bool = False
     diagnostic: dict[str, Any] | None = None
+    aborted: bool = False
 
 
 class BaseExpertNode(ABC):
@@ -265,13 +285,17 @@ class BaseExpertNode(ABC):
         issues: list[ExpertIssue] = []
         errors: list[str] = []
         failed: list[dict[str, Any]] = []
+        aborted = 0
         for outcome in sorted(outcomes, key=lambda o: o.batch.index):
             issues.extend(outcome.issues)
             if outcome.error:
-                errors.append(
-                    f"{self.expert_name}: batch {outcome.batch.index + 1} failed: "
-                    f"{outcome.error}"
-                )
+                if outcome.aborted:
+                    aborted += 1
+                else:
+                    errors.append(
+                        f"{self.expert_name}: batch {outcome.batch.index} failed: "
+                        f"{outcome.error}"
+                    )
                 failed.append(
                     {
                         "expert": self.expert_name,
@@ -281,6 +305,20 @@ class BaseExpertNode(ABC):
                     }
                 )
 
+        breaker = self._config.breaker
+        if aborted:
+            # One summary line instead of one warning per aborted batch.
+            LOGGER.warning(
+                "%s aborted %d of %d batches: %s",
+                self.expert_name,
+                aborted,
+                len(batches),
+                breaker.reason,
+            )
+            errors.append(
+                f"{self.expert_name}: {aborted} batches aborted: {breaker.reason}"
+            )
+
         LOGGER.info(
             "%s found %d issues (%d/%d batches failed)",
             self.expert_name,
@@ -288,7 +326,7 @@ class BaseExpertNode(ABC):
             len(failed),
             len(batches),
         )
-        return {
+        result: dict[str, Any] = {
             "issues": issues,
             "expert_errors": errors,
             "failed_batches": failed,
@@ -304,10 +342,14 @@ class BaseExpertNode(ABC):
                         o.diagnostic for o in outcomes if o.diagnostic
                     ],
                     "failed_batches": len(failed),
+                    "aborted_batches": aborted,
                     "issues_found": len(issues),
                 }
             },
         }
+        if breaker.is_open:
+            result["provider_error"] = breaker.reason
+        return result
 
     async def _run_batch(
         self,
@@ -328,12 +370,14 @@ class BaseExpertNode(ABC):
                     getattr(self, "_total_batches", batch.index + 1),
                 )
                 response = await self._invoke_with_retry(messages, batch.index)
+        except ProviderUnavailableError as exc:
+            # Breaker already open: no call was made, no per-batch log.
+            return _BatchOutcome(batch=batch, error=f"aborted: {exc}", aborted=True)
         except Exception as exc:  # noqa: BLE001
             LOGGER.error(
-                "%s batch %d failed after %d attempts: %s",
+                "%s batch %d failed: %s",
                 self.expert_name,
                 batch.index,
-                self._config.max_attempts,
                 exc,
             )
             return _BatchOutcome(batch=batch, error=str(exc))
@@ -383,12 +427,42 @@ class BaseExpertNode(ABC):
         )
 
     async def _invoke_with_retry(self, messages: list[Any], batch_index: int) -> Any:
+        """Call the model, retrying only transient errors.
+
+        * ``RETRY``: exponential backoff up to ``max_attempts``.
+        * ``FAIL_BATCH``: re-raised at once; other batches are unaffected.
+        * ``FATAL``: opens the shared breaker and re-raises; every batch that
+          has not called the provider yet gets ``ProviderUnavailableError``.
+        """
+        breaker = self._config.breaker
         last_exc: Exception | None = None
         for attempt in range(self._config.max_attempts):
+            if breaker.is_open:
+                raise ProviderUnavailableError(breaker.reason or "provider unavailable")
             try:
                 return await self._model.ainvoke(messages)
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                kind = classify(exc)
+                if kind is ErrorClass.FATAL:
+                    reason = describe(exc)
+                    if breaker.trip(reason):
+                        LOGGER.error(
+                            "%s batch %d: non-retryable provider error; aborting "
+                            "the remaining batches of every expert: %s",
+                            self.expert_name,
+                            batch_index,
+                            reason,
+                        )
+                    raise
+                if kind is ErrorClass.FAIL_BATCH:
+                    LOGGER.warning(
+                        "%s batch %d rejected by the provider (%s); not retrying",
+                        self.expert_name,
+                        batch_index,
+                        describe(exc),
+                    )
+                    raise
                 if attempt + 1 >= self._config.max_attempts:
                     break
                 delay = self._config.backoff_base_seconds * (2**attempt)

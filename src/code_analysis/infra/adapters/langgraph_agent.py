@@ -174,6 +174,7 @@ class LangGraphAgent(AbstractAgent):
                 "expert_errors": [],
                 "failed_batches": [],
                 "expert_metadata": {},
+                "provider_error": None,
             }
 
             # Execute workflow with optional Langfuse tracing
@@ -191,6 +192,9 @@ class LangGraphAgent(AbstractAgent):
                 initial_state["task_id"],
                 initial_state["repository_url"],
             )
+            # The breaker lives in the shared expert config, which outlives a
+            # single scan: a provider outage in one scan must not abort the next.
+            self._expert_config.breaker.reset()
             result = await self._workflow.ainvoke(initial_state, config=config)
             LOGGER.info(
                 "[LangGraphAgent] Workflow completed, keys: %s",

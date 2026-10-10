@@ -11,7 +11,9 @@ envelope:
   loses, invents or re-rates a finding is rejected and keeps its L1 findings.
 
 The node also reports an ``incomplete`` block when expert batches failed, and
-never lets such a scan end as ``COMPLETED``.
+never lets such a scan end as ``COMPLETED``. When the experts reported a
+provider outage (``state.provider_error``) the scan ends ``FAILED`` with an
+explicit ``error`` and L2 is skipped: calling the model again would only fail.
 """
 
 import json
@@ -73,6 +75,7 @@ class MergeFindingsNode:
             expert_errors = state.get("expert_errors", []) or []
             failed_batches = state.get("failed_batches", []) or []
             expert_metadata = state.get("expert_metadata", {}) or {}
+            provider_error = state.get("provider_error") or None
 
             LOGGER.info(
                 "Merging %d issues from experts (%d expert errors, %d failed batches)",
@@ -84,7 +87,10 @@ class MergeFindingsNode:
                 LOGGER.warning("Expert error: %s", error)
 
             l1_issues = FindingsMerger.dedupe(raw_issues)
-            final_issues, l2_metrics = self._consolidate_l2(l1_issues)
+            final_issues, l2_metrics = self._consolidate_l2(
+                l1_issues,
+                skip_reason="provider_unavailable" if provider_error else None,
+            )
             metrics = {
                 "l1_in": len(raw_issues),
                 "l1_out": len(l1_issues),
@@ -99,6 +105,9 @@ class MergeFindingsNode:
             if mcp_error or scaned_files == 0:
                 status = "FAILED"
                 error_message = mcp_error or "No files scanned"
+            elif provider_error:
+                status = "FAILED"
+                error_message = f"Proveedor LLM no disponible: {provider_error}"
             elif any(i.severity in ("CRITICAL", "HIGH") for i in final_issues):
                 status = "FAILED"
             elif final_issues or incomplete:
@@ -202,19 +211,24 @@ class MergeFindingsNode:
     def _consolidate_l2(
         self,
         issues: list[ExpertIssue],
-    ) -> tuple[list[ExpertIssue], dict[str, int]]:
-        metrics = {
+        skip_reason: str | None = None,
+    ) -> tuple[list[ExpertIssue], dict[str, Any]]:
+        metrics: dict[str, Any] = {
             "l2_in": len(issues),
             "l2_out": 0,
             "l2_groups": 0,
             "l2_groups_rejected": 0,
         }
         if self._model is None:
+            skip_reason = "missing_model"
+        if skip_reason:
             metrics["l2_out"] = len(issues)
+            metrics["l2_skipped_reason"] = skip_reason
             LOGGER.info(
-                "Findings consolidation skipped: trace_version=%s reason=missing_model "
+                "Findings consolidation skipped: trace_version=%s reason=%s "
                 "original_count=%d",
                 CONSOLIDATION_TRACE_VERSION,
+                skip_reason,
                 len(issues),
             )
             return list(issues), metrics
