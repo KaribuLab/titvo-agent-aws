@@ -293,7 +293,7 @@ class BaseExpertNode(ABC):
                     aborted += 1
                 else:
                     errors.append(
-                        f"{self.expert_name}: batch {outcome.batch.index} failed: "
+                        f"{self.expert_name}: batch {outcome.batch.index + 1} failed: "
                         f"{outcome.error}"
                     )
                 failed.append(

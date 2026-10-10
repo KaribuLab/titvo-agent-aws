@@ -243,6 +243,8 @@ class TestFailedBatches:
         result = await node({"files": [_file("a.py", "x")], "issues": []})
         assert model.ainvoke.await_count == 3
         assert len(result["failed_batches"]) == 1
+        assert result["failed_batches"][0]["batch_index"] == 0
+        assert result["expert_errors"] == ["owasp_api: batch 1 failed: 429"]
 
     @pytest.mark.asyncio
     async def test_unparsable_response_is_a_failed_batch(self):
