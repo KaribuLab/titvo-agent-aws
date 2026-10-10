@@ -254,6 +254,128 @@ class TestFailedBatches:
         assert result["failed_batches"][0]["error"] == "Failed to parse JSON response"
 
 
+class _ProviderError(Exception):
+    def __init__(self, status_code: int, message: str, code: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.body = {"message": message, "code": code}
+
+
+def _no_credits() -> _ProviderError:
+    return _ProviderError(
+        429, "You have no credits remaining.", code="credit_balance_exhausted"
+    )
+
+
+class TestNonRetryableErrors:
+    @pytest.mark.asyncio
+    async def test_no_credits_is_not_retried_and_aborts_remaining_batches(self):
+        files = [_file(f"f{i:02d}.py", "x" * 20_000) for i in range(100)]  # 10 batches
+        config = ExpertRuntimeConfig(max_attempts=3, max_concurrency=2)
+        model = MagicMock()
+        model.ainvoke = AsyncMock(side_effect=_no_credits())
+
+        result = await CodeVulnerabilitiesNode(model, config)(
+            {"files": files, "issues": []}
+        )
+
+        # At most the batches in flight when the breaker opened called the
+        # provider, and each of them exactly once (no retries, no backoff).
+        assert model.ainvoke.await_count <= config.max_concurrency
+        assert len(result["failed_batches"]) == 10
+        assert config.breaker.is_open
+        assert result["provider_error"] == (
+            "429 credit_balance_exhausted: You have no credits remaining."
+        )
+        aborted = [
+            b for b in result["failed_batches"] if b["error"].startswith("aborted:")
+        ]
+        assert len(aborted) == 10 - model.ainvoke.await_count
+        assert all(b["paths"] for b in aborted)
+        assert result["expert_metadata"]["code_vulnerabilities"][
+            "aborted_batches"
+        ] == len(aborted)
+        # One summary entry for the aborted batches, not one per batch.
+        summary = [e for e in result["expert_errors"] if "batches aborted" in e]
+        assert len(summary) == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_without_quota_cause_is_still_retried(self):
+        model = MagicMock()
+        model.ainvoke = AsyncMock(
+            side_effect=_ProviderError(429, "Rate limit reached", code="rate_limit")
+        )
+        config = ExpertRuntimeConfig(max_attempts=3)
+        result = await OwaspApiNode(model, config)(
+            {"files": [_file("a.py", "x")], "issues": []}
+        )
+        assert model.ainvoke.await_count == 3
+        assert not config.breaker.is_open
+        assert "provider_error" not in result
+
+    @pytest.mark.asyncio
+    async def test_context_length_fails_only_its_batch(self):
+        files = [_file(f"f{i:02d}.py", "x" * 20_000) for i in range(30)]  # 3 batches
+        config = ExpertRuntimeConfig(max_attempts=3)
+        calls: list[str] = []
+
+        async def _ainvoke(messages):
+            first_path = messages[1].content.split("=== FILE: ")[1].split(" ")[0]
+            calls.append(first_path)
+            if first_path == "f10.py":
+                raise _ProviderError(
+                    400,
+                    "maximum context length exceeded",
+                    code="context_length_exceeded",
+                )
+            return _response([_issue_json(first_path, 1)])
+
+        model = MagicMock()
+        model.ainvoke = _ainvoke
+        result = await CodeVulnerabilitiesNode(model, config)(
+            {"files": files, "issues": []}
+        )
+
+        assert calls.count("f10.py") == 1  # no retry
+        assert len(result["issues"]) == 2
+        assert [b["batch_index"] for b in result["failed_batches"]] == [1]
+        assert not config.breaker.is_open
+        assert "provider_error" not in result
+
+    @pytest.mark.asyncio
+    async def test_breaker_is_shared_across_experts(self):
+        config = ExpertRuntimeConfig(max_attempts=3)
+        failing = MagicMock()
+        failing.ainvoke = AsyncMock(side_effect=_no_credits())
+        healthy = MagicMock()
+        healthy.ainvoke = AsyncMock(return_value=_response([]))
+        state = {"files": [_file("a.py", "x")], "issues": []}
+
+        first = await CodeVulnerabilitiesNode(failing, config)(state)
+        second = await OwaspApiNode(healthy, config)(state)
+
+        assert first["provider_error"] == second["provider_error"]
+        healthy.ainvoke.assert_not_awaited()
+        assert second["failed_batches"][0]["error"].startswith("aborted:")
+
+    @pytest.mark.asyncio
+    async def test_reset_lets_the_next_scan_call_the_provider(self):
+        config = ExpertRuntimeConfig(max_attempts=3)
+        config.breaker.trip("429 credit_balance_exhausted: no credits")
+        model = MagicMock()
+        model.ainvoke = AsyncMock(return_value=_response([]))
+
+        config.breaker.reset()
+        result = await OwaspApiNode(model, config)(
+            {"files": [_file("a.py", "x")], "issues": []}
+        )
+
+        assert model.ainvoke.await_count == 1
+        assert result["failed_batches"] == []
+        assert "provider_error" not in result
+
+
 class TestLineMapping:
     def test_single_chunk_line_untouched(self):
         node = CodeVulnerabilitiesNode(None)

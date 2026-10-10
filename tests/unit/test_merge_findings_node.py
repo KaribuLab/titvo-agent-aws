@@ -313,3 +313,64 @@ def _parse_findings(prompt: str) -> list[tuple[str, int, str]]:
     start = prompt.index("Hallazgos de entrada:") + len("Hallazgos de entrada:")
     data = json.loads(prompt[start:].strip())
     return [(d["path"], d["line"], d["code"]) for d in data]
+
+
+class TestProviderUnavailable:
+    def test_provider_error_is_failed_with_explicit_error(self):
+        node = MergeFindingsNode(model=None)
+        state = _state(
+            [],
+            failed_batches=[
+                {
+                    "expert": "owasp_web",
+                    "batch_index": 0,
+                    "paths": ["src/a.ts"],
+                    "error": "aborted: 429 insufficient_quota: no credits",
+                }
+            ],
+            expert_metadata={"owasp_web": {"batches": 1, "failed_batches": 1}},
+            provider_error="429 insufficient_quota: You have no credits remaining",
+        )
+
+        result = node(state)
+        output = result["final_output"]
+
+        assert output["status"] == "FAILED"
+        assert output["error"] == (
+            "Proveedor LLM no disponible: 429 insufficient_quota: "
+            "You have no credits remaining"
+        )
+        assert output["incomplete"]["files_not_fully_analyzed"] == ["src/a.ts"]
+
+    def test_provider_error_skips_l2_and_keeps_l1(self):
+        model = MagicMock()
+        issues = [
+            _issue("A", line=10, expert="owasp_web"),
+            _issue("B", line=20, expert="owasp_api"),
+        ]
+        node = MergeFindingsNode(model=model)
+
+        result = node(_state(issues, provider_error="401 invalid_api_key: bad key"))
+
+        model.invoke.assert_not_called()
+        output = result["final_output"]
+        assert output["status"] == "FAILED"
+        assert {i["title"] for i in output["issues"]} == {"A", "B"}
+        assert (
+            result["expert_metadata"]["consolidation"]["l2_skipped_reason"]
+            == "provider_unavailable"
+        )
+
+    def test_without_provider_error_incomplete_scan_stays_warning(self):
+        node = MergeFindingsNode(model=None)
+        state = _state(
+            [],
+            failed_batches=[
+                {"expert": "owasp_web", "batch_index": 0, "paths": ["x"], "error": "e"}
+            ],
+            expert_metadata={"owasp_web": {"batches": 2, "failed_batches": 1}},
+            provider_error=None,
+        )
+        output = node(state)["final_output"]
+        assert output["status"] == "WARNING"
+        assert "error" not in output
