@@ -5,6 +5,8 @@ Implements AbstractAgent using LangGraph workflow with multiple expert nodes.
 
 import json
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -26,6 +28,7 @@ from code_analysis.infra.adapters.langgraph.nodes.rag_retrieval_node import (
 )
 from code_analysis.infra.adapters.langgraph.state import AgentState
 from code_analysis.infra.adapters.langgraph.workflow import create_workflow
+from code_analysis.infra.adapters.model_usage import UsageModel
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +51,10 @@ class LangGraphAgent(AbstractAgent):
         langfuse_metadata: dict[str, Any] | None = None,
         rag_node: RagRetrievalNode | None = None,
         expert_config: ExpertRuntimeConfig | None = None,
+        retrieval_node: Any | None = None,
+        usage_provider: str | None = None,
+        usage_model: str | None = None,
+        usage_base_url: str | None = None,
     ):
         # Experts compose their own system message (common preamble + domain
         # prompt via PromptRegistry); the base-class slot keeps the preamble
@@ -59,6 +66,9 @@ class LangGraphAgent(AbstractAgent):
         self._langfuse_metadata = langfuse_metadata or {}
         self._rag_node = rag_node
         self._expert_config = expert_config or ExpertRuntimeConfig()
+        self._retrieval_node = retrieval_node
+        self._usage_settings = (usage_provider, usage_model, usage_base_url)
+        self._usage = None
         self._workflow = None
         self._mcp_client = None
 
@@ -79,7 +89,9 @@ class LangGraphAgent(AbstractAgent):
 
         # Extract MCP client from tools factory
         # The AsyncMCPToolsFactory has the client
-        if hasattr(self._tools_factory, "_mcp_client"):
+        if self._retrieval_node is not None:
+            self._mcp_client = None
+        elif hasattr(self._tools_factory, "_mcp_client"):
             self._mcp_client = self._tools_factory._mcp_client
         else:
             # Create new client if not available
@@ -94,12 +106,18 @@ class LangGraphAgent(AbstractAgent):
                 }
             )
 
+        # AWS and lab use the same accounting boundary around all model calls.
+        provider, model_name, base_url = self._usage_settings
+        if provider is not None:
+            self._usage = UsageModel(model, "real", provider, model_name, base_url)
+            model = self._usage
         # Build workflow
         self._workflow = create_workflow(
             self._mcp_client,
             model,
             rag_node=self._rag_node,
             expert_config=self._expert_config,
+            retrieval_node=self._retrieval_node,
         )
         LOGGER.info("LangGraph workflow initialized")
 
@@ -122,6 +140,8 @@ class LangGraphAgent(AbstractAgent):
         if self._workflow is None:
             raise RuntimeError("Agent not initialized. Call invoke() first.")
 
+        started = time.monotonic()
+        started_at = datetime.now(timezone.utc)
         try:
             # Parse message content for task parameters, then overlay structured
             # metadata from the use case. Operational values must not depend only
@@ -202,6 +222,11 @@ class LangGraphAgent(AbstractAgent):
                 len(final_output.get("issues", [])),
             )
 
+            final_output["metrics"] = self._execution_metrics(
+                final_output, started, started_at, message.metadata
+            )
+            if self._usage is not None:
+                final_output["usage"] = self._usage.summary()
             return AgentResponse(
                 content=json.dumps(final_output),
                 metadata={
@@ -219,11 +244,47 @@ class LangGraphAgent(AbstractAgent):
                 "scaned_files": 0,
                 "issues": [],
                 "error": str(e),
+                "coverage": {"complete": False, "errors": [str(e)]},
             }
+            error_result["metrics"] = self._execution_metrics(
+                error_result, started, started_at, message.metadata
+            )
+            if self._usage is not None:
+                error_result["usage"] = self._usage.summary()
             return AgentResponse(
                 content=json.dumps(error_result),
                 metadata={"error": str(e)},
             )
+
+    @staticmethod
+    def _execution_metrics(result, started, started_at, metadata):
+        """Persist measured duration and batches without fabricating historical data."""
+        finished = datetime.now(timezone.utc)
+        experts = result.get("coverage", {}).get("experts", {})
+        metrics = {
+            "started_at": started_at.isoformat(),
+            "finished_at": finished.isoformat(),
+            "duration_seconds": round(time.monotonic() - started, 3),
+            "total_batches": sum(
+                expert.get("batches_total", expert.get("batches", 0))
+                for expert in experts.values()
+            ),
+            "completed_batches": sum(
+                expert.get("batches_completed", 0) for expert in experts.values()
+            ),
+        }
+        created = (metadata or {}).get("created_at")
+        if isinstance(created, str):
+            try:
+                created_at = datetime.fromisoformat(created)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                metrics["task_duration_seconds"] = max(
+                    0.0, round((finished - created_at).total_seconds(), 3)
+                )
+            except ValueError:
+                pass
+        return metrics
 
     def _parse_message_content(self, content: str) -> dict[str, Any]:
         """Parse message content for task parameters.

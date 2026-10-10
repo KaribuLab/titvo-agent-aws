@@ -50,17 +50,19 @@ class LangGraphWorkflowBuilder:
         model: BaseChatModel,
         rag_node: RagRetrievalNode | None = None,
         expert_config: ExpertRuntimeConfig | None = None,
+        retrieval_node: Any | None = None,
     ):
         self._mcp_client = mcp_client
         self._model = model
         self._rag_node = rag_node
-        self._expert_config = expert_config or ExpertRuntimeConfig()
+        self._expert_config = expert_config or ExpertRuntimeConfig.from_env()
+        self._retrieval_node = retrieval_node
 
     def build(self) -> StateGraph:
         """Build and return the compiled StateGraph."""
         LOGGER.info("Building LangGraph workflow")
 
-        mcp_node = MCPRetrievalNode(self._mcp_client)
+        mcp_node = self._retrieval_node or MCPRetrievalNode(self._mcp_client)
         classify_node = ClassifyRuntimeNode(EXPERT_RUNTIMES)
         expert_nodes = create_expert_nodes(self._model, self._expert_config)
         merge_node = MergeFindingsNode(self._model)
@@ -129,9 +131,14 @@ def create_workflow(
     model: BaseChatModel,
     rag_node: RagRetrievalNode | None = None,
     expert_config: ExpertRuntimeConfig | None = None,
+    retrieval_node: Any | None = None,
 ) -> Any:
     """Factory function to create compiled workflow."""
     builder = LangGraphWorkflowBuilder(
-        mcp_client, model, rag_node=rag_node, expert_config=expert_config
+        mcp_client,
+        model,
+        rag_node=rag_node,
+        expert_config=expert_config,
+        retrieval_node=retrieval_node,
     )
     return builder.build()

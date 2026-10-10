@@ -120,6 +120,13 @@ class MergeFindingsNode:
                 "scaned_files": scaned_files,
                 "issues": [issue.to_dict() for issue in final_issues],
             }
+            result["coverage"] = {
+                "complete": not bool(
+                    mcp_error or expert_errors or failed_batches or scaned_files == 0
+                ),
+                "errors": expert_errors,
+                "experts": expert_metadata,
+            }
             if error_message:
                 result["error"] = error_message
             if incomplete:
@@ -150,6 +157,7 @@ class MergeFindingsNode:
                     "scaned_files": state.get("scaned_files", 0),
                     "issues": [],
                     "error": str(e),
+                    "coverage": {"complete": False, "errors": [str(e)]},
                 },
             }
 
@@ -408,6 +416,13 @@ class MergeFindingsNode:
             code = normalize_code(str(item["code"]))
             if code not in {normalize_code(s.code) for s in sources}:
                 raise ValueError("Consolidated issue invented code evidence")
+            if (str(item["path"]), line, code) not in {
+                (source.path, source.line, normalize_code(source.code))
+                for source in sources
+            }:
+                raise ValueError(
+                    "Consolidated issue mixed unrelated evidence coordinates"
+                )
 
             merged_from: set[str] = set()
             for source in sources:

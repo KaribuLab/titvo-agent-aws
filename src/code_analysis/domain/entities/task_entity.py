@@ -69,7 +69,8 @@ class Task:
                 raise ValueError("Bitbucket commit must be a string and not None")
             return bitbucket_commit
         else:
-            commit_hash = self.args.get("commit_hash")
+            # Uploaded working trees have a batch identity even without a Git SHA.
+            commit_hash = self.args.get("commit_hash") or self.args.get("batch_id")
             if commit_hash is None:
                 raise ValueError("Commit hash must be a string and not None")
             return commit_hash

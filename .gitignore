@@ -4,3 +4,4 @@ __pycache__/
 .env*
 .terragrunt-cache
 .terraform.lock.hcl
+*.egg-info/
