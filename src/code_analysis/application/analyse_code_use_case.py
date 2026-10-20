@@ -2,9 +2,10 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from typing import Any, Dict
 
 from code_analysis.domain.dto.result_dto import AnalysisStatus, ResultDto
-from code_analysis.domain.entities.task_entity import Task, TaskSource
+from code_analysis.domain.entities.task_entity import Task, TaskSource, TaskStatus
 from code_analysis.domain.notification_service import NotificationService
 from code_analysis.domain.ports.ia_agent import AbstractAgent, AgentMessage
 from code_analysis.domain.ports.rag_index_status_port import IRagIndexStatusPort
@@ -181,6 +182,32 @@ class AnalyseCodeUseCase:
             return content
         return content
 
+    @staticmethod
+    def _log_failure(task_id: str, result: Dict[str, Any]) -> None:
+        """Explain in the logs why a scan ended FAILED."""
+        error = result.get("error")
+        incomplete = result.get("incomplete") or {}
+        coverage_errors = (result.get("coverage") or {}).get("errors") or []
+        if error:
+            LOGGER.error(
+                "Task %s FAILED because of an infrastructure error: %s", task_id, error
+            )
+        else:
+            LOGGER.warning(
+                "Task %s FAILED: %d finding(s) with CRITICAL/HIGH severity",
+                task_id,
+                result.get("issues_count", 0),
+            )
+        if incomplete:
+            LOGGER.warning(
+                "Task %s incomplete: %s (files: %s)",
+                task_id,
+                incomplete.get("message"),
+                ", ".join(incomplete.get("files_not_fully_analyzed", [])),
+            )
+        for coverage_error in coverage_errors:
+            LOGGER.warning("Task %s expert error: %s", task_id, coverage_error)
+
     async def execute(self, task_id: str) -> Task:
         LOGGER.info("Executing analyse code use case with task id %s", task_id)
         task = self.task_repository.get_task(task_id)
@@ -286,7 +313,7 @@ class AnalyseCodeUseCase:
                 LOGGER.info("Marking task %s as completed", task_id)
             elif status == AnalysisStatus.FAILED.value:
                 task.mark_failed(result, result.get("scaned_files"))
-                LOGGER.warning("Marking task %s as failed", task_id)
+                self._log_failure(task_id, result)
             elif status == AnalysisStatus.WARNING.value:
                 LOGGER.error("Marking task %s as error", task_id)
                 task.mark_completed(result, result.get("scaned_files"))
@@ -296,3 +323,17 @@ class AnalyseCodeUseCase:
             LOGGER.error("Error marking task %s as %s: %s", task_id, status, e)
             task.mark_error()
         return self.task_repository.update_task(task)
+
+
+def exit_code_for_task(task: Task) -> int:
+    """Process exit code for the Batch job once the task has been persisted.
+
+    Returns 1 only when the scan could not run (infrastructure error or an
+    unexpected exception while persisting). A FAILED task caused by findings
+    is a successful scan and exits with 0.
+    """
+    if task.status == TaskStatus.ERROR:
+        return 1
+    if task.status == TaskStatus.FAILED and (task.result or {}).get("error"):
+        return 1
+    return 0

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from logging.config import dictConfig
 from typing import Any, Optional
 from urllib.error import URLError
@@ -13,7 +14,10 @@ from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
 from code_analysis import prompts as prompt_registry
-from code_analysis.application.analyse_code_use_case import AnalyseCodeUseCase
+from code_analysis.application.analyse_code_use_case import (
+    AnalyseCodeUseCase,
+    exit_code_for_task,
+)
 from code_analysis.domain.entities.task_entity import TaskSource
 from code_analysis.domain.notification_service import NotificationService
 from code_analysis.domain.ports.ia_agent import AsyncAgentToolsFactory
@@ -162,7 +166,7 @@ async def create_langgraph_agent(
     return agent, content_template
 
 
-async def main():
+async def main() -> int:
     task_id = os.getenv("TITVO_SCAN_TASK_ID")
     log_runtime_identity(task_id)
     LOGGER.debug("Starting the application with task id %s", task_id)
@@ -334,8 +338,21 @@ async def main():
         rag_index_status=rag_index_status,
         rag_indexer_trigger=rag_indexer_trigger,
     )
-    await analyse_code_use_case.execute(task_id)
+    task = await analyse_code_use_case.execute(task_id)
+    exit_code = exit_code_for_task(task)
+    if exit_code:
+        # The task is already persisted as FAILED/ERROR in DynamoDB, so the
+        # status API never consults the Batch job for it. A non-zero exit only
+        # makes the Batch job itself show as FAILED for operators.
+        LOGGER.error(
+            "Task %s ended with status %s: %s. Exiting with code %d",
+            task_id,
+            task.status.value,
+            (task.result or {}).get("error"),
+            exit_code,
+        )
+    return exit_code
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

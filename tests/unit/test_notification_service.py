@@ -98,9 +98,7 @@ def test_lambda_bitbucket_repository_sends_scan_mode(monkeypatch):
     lambda_client = MagicMock()
     lambda_client.invoke.return_value = {
         "StatusCode": 200,
-        "Payload": BytesIO(
-            b'{"codeInsightsURL":"https://bitbucket.example/insights"}'
-        ),
+        "Payload": BytesIO(b'{"codeInsightsURL":"https://bitbucket.example/insights"}'),
     }
     monkeypatch.setattr(
         "code_analysis.infra.adapters.lambda_bitbucket_repository.boto3.client",
@@ -149,3 +147,70 @@ def test_lambda_bitbucket_repository_raises_error_payload(monkeypatch):
                 annotations=[],
             )
         )
+
+
+def _failed_dto(
+    error: str | None, source: str = TaskSource.BITBUCKET.value
+) -> ResultDto:
+    return ResultDto(
+        source=source,
+        args={
+            "bitbucket_workspace": "workspace",
+            "bitbucket_repo_slug": "repo",
+            "bitbucket_commit": "abc123",
+            "github_repo_name": "org/repo",
+            "github_commit_sha": "abc123",
+        },
+        commit_hash="abc123",
+        status=AnalysisStatus.FAILED.value,
+        scaned_files=2,
+        issues=[],
+        error=error,
+        incomplete={
+            "failed_batches": [],
+            "files_not_fully_analyzed": ["README.md", "plugins/spa-links.js"],
+            "message": "Análisis incompleto: 5 de 5 lotes fallaron",
+        }
+        if error
+        else None,
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [TaskSource.BITBUCKET.value, TaskSource.GITHUB.value, TaskSource.CLI.value],
+)
+def test_failed_with_infrastructure_error_skips_report_and_notifications(
+    source, caplog
+):
+    bitbucket_repository = MagicMock()
+    service = _service(bitbucket_repository)
+
+    with caplog.at_level("ERROR"):
+        result = service.send_notifications(
+            _failed_dto(
+                "Proveedor LLM no disponible: 429 credit_balance_exhausted", source
+            )
+        )
+
+    assert result == {}
+    service.report_repository.create_report.assert_not_called()
+    bitbucket_repository.create_code_insights_report.assert_not_called()
+    service.github_repository.create_github_issue.assert_not_called()
+    assert "Skipping HTML report" in caplog.text
+    assert "429 credit_balance_exhausted" in caplog.text
+    assert "files_not_fully_analyzed=2" in caplog.text
+
+
+def test_failed_by_findings_still_creates_report():
+    bitbucket_repository = MagicMock()
+    bitbucket_repository.create_code_insights_report.return_value = {
+        "codeInsightsURL": "https://bitbucket.example/insights"
+    }
+    service = _service(bitbucket_repository)
+
+    result = service.send_notifications(_failed_dto(error=None))
+
+    service.report_repository.create_report.assert_called_once()
+    assert result["report_url"] == "https://reports.example/report.html"
+    assert result["code_insights_url"] == "https://bitbucket.example/insights"

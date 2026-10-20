@@ -267,3 +267,117 @@ async def test_cli_bypasses_git_rag_and_keeps_coverage():
     use_case.rag_indexer_trigger.trigger_full.assert_not_called()
     use_case.rag_indexer_trigger.trigger_delta.assert_not_called()
     assert task.result["coverage"]["complete"]
+
+
+def _task_with(status, result):
+    from datetime import datetime
+
+    from code_analysis.domain.entities.task_entity import Task, TaskSource
+
+    return Task(
+        id="task-1",
+        result=result,
+        args={},
+        hint_id="hint",
+        scaned_files=0,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        status=status,
+        source=TaskSource.CLI,
+    )
+
+
+def test_exit_code_is_one_for_failed_with_infrastructure_error():
+    from code_analysis.application.analyse_code_use_case import exit_code_for_task
+    from code_analysis.domain.entities.task_entity import TaskStatus
+
+    task = _task_with(TaskStatus.FAILED, {"error": "Proveedor LLM no disponible: 429"})
+
+    assert exit_code_for_task(task) == 1
+
+
+def test_exit_code_is_one_for_error_status():
+    from code_analysis.application.analyse_code_use_case import exit_code_for_task
+    from code_analysis.domain.entities.task_entity import TaskStatus
+
+    assert exit_code_for_task(_task_with(TaskStatus.ERROR, {})) == 1
+
+
+@pytest.mark.parametrize(
+    "status, result",
+    [
+        ("FAILED", {"issues_count": 2}),
+        ("COMPLETED", {"issues_count": 0}),
+    ],
+)
+def test_exit_code_is_zero_when_scan_ran(status, result):
+    from code_analysis.application.analyse_code_use_case import exit_code_for_task
+    from code_analysis.domain.entities.task_entity import TaskStatus
+
+    assert exit_code_for_task(_task_with(TaskStatus(status), result)) == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_with_error_logs_cause(caplog):
+    import json as _json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from code_analysis.domain.entities.task_entity import Task, TaskSource
+
+    task = MagicMock(spec=Task)
+    task.branch = "main"
+    task.repository_url = "https://github.com/org/repo"
+    task.commit_hash = "abc123"
+    task.args = {}
+    task.source = TaskSource.GITHUB
+    task_repository = MagicMock()
+    task_repository.get_task.return_value = task
+    task_repository.update_task.side_effect = lambda t: t
+
+    agent = MagicMock()
+    agent.invoke = AsyncMock(
+        return_value=MagicMock(
+            content=_json.dumps(
+                {
+                    "status": "FAILED",
+                    "scaned_files": 2,
+                    "issues": [],
+                    "error": (
+                        "Proveedor LLM no disponible: 429 credit_balance_exhausted"
+                    ),
+                    "incomplete": {
+                        "failed_batches": [],
+                        "files_not_fully_analyzed": ["README.md"],
+                        "message": "Análisis incompleto: 5 de 5 lotes fallaron",
+                    },
+                    "coverage": {
+                        "complete": False,
+                        "errors": ["owasp_web: batch 1 failed: Error code: 429"],
+                    },
+                }
+            ),
+            metadata={},
+        )
+    )
+    notification_service = MagicMock()
+    notification_service.send_notifications.return_value = {}
+    rag_status = MagicMock()
+    rag_status.is_indexed.return_value = True
+
+    use_case = AnalyseCodeUseCase(
+        task_repository=task_repository,
+        agent=agent,
+        notification_service=notification_service,
+        content_template="",
+        rag_index_status=rag_status,
+        rag_indexer_trigger=MagicMock(),
+    )
+
+    with caplog.at_level("WARNING"):
+        await use_case.execute("task-1")
+
+    task.mark_failed.assert_called_once()
+    assert "infrastructure error" in caplog.text
+    assert "429 credit_balance_exhausted" in caplog.text
+    assert "5 de 5 lotes fallaron" in caplog.text
+    assert "owasp_web: batch 1 failed" in caplog.text

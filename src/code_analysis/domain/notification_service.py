@@ -47,6 +47,22 @@ class NotificationService:
     def send_notifications(self, result_dto: ResultDto) -> Dict[str, Any]:
         if result_dto.status == AnalysisStatus.COMPLETED.value:
             return {}
+        if result_dto.error:
+            # FAILED caused by infrastructure (LLM provider down, MCP failure,
+            # no files scanned), not by findings. There is nothing to report:
+            # skip the HTML report and every downstream notification.
+            files_not_analyzed = (result_dto.incomplete or {}).get(
+                "files_not_fully_analyzed", []
+            )
+            LOGGER.error(
+                "Skipping HTML report and notifications: the scan did not run "
+                "because of an infrastructure error (status=%s, "
+                "files_not_fully_analyzed=%d): %s",
+                result_dto.status,
+                len(files_not_analyzed),
+                result_dto.error,
+            )
+            return {}
         notifications_results = {}
         issues = self.__normalize_issues(result_dto.commit_hash, result_dto.issues)
         report_result = self.report_repository.create_report(
