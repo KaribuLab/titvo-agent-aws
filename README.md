@@ -61,6 +61,25 @@ sospechas**: hallazgos no confirmables se reportan igual con título `Sospecha: 
 MEDIUM máximo (garantizado por código en `BaseExpertNode`) y una frase `Para confirmar: …` con la
 verificación concreta.
 
+### Timeout por petición al modelo
+
+`TITVO_AI_REQUEST_TIMEOUT_SECONDS` define el timeout de transporte por petición
+al SDK en segundos (default **300**), para OpenAI, OpenRouter, Anthropic y Google,
+incluidos endpoints personalizados HTTPS. Se aplica a expertos, correcciones y
+consolidación síncrona mediante la misma fábrica de modelos.
+
+El override debe ser un número finito mayor que cero (por ejemplo, `60` o `0.5`).
+Un valor vacío, no numérico, infinito, NaN o no positivo produce un error de
+configuración; no desactiva el timeout ni vuelve silenciosamente al default.
+
+**No es un deadline global del scan ni un límite de tiempo total (wall-clock).**
+Los reintentos del SDK y de la aplicación se conservan y pueden multiplicar la
+duración; los límites de transporte tampoco acotan toda la ejecución del agente.
+Los fallos de lote se registran con experto, número de lote desde 1 y categoría
+segura/clase de excepción; los fallos de respuesta JSON se registran a nivel ERROR
+sin incluir código, claves, URLs ni respuestas crudas del proveedor. Estos logs
+son diagnósticos, no una prueba de la causa de un incidente en producción.
+
 ### Variables de entorno de los expertos
 
 | Variable | Default | Descripción |
