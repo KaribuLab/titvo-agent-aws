@@ -72,3 +72,54 @@ def test_configure_clears_the_disabled_state(adapter):
     adapter.search("q", k=1)
 
     assert embeddings.embed_documents.call_count == 2
+
+
+def _adapter_with_base_url(base_url):
+    return S3SqliteRagContextAdapter(
+        s3_client=MagicMock(),
+        bucket_name="bucket",
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_api_key="sk-or-v1-key",
+        embedding_base_url=base_url,
+    )
+
+
+def test_embedding_base_url_is_forwarded_like_the_rag_indexer(monkeypatch):
+    """The query vector must come from the same endpoint that built the index."""
+    captured = {}
+
+    def fake_embeddings(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "code_analysis.infra.adapters.s3_sqlite_rag_context_adapter.OpenAIEmbeddings",
+        fake_embeddings,
+    )
+
+    _adapter_with_base_url(" https://openrouter.ai/api/v1 ")._build_embeddings()
+
+    assert captured == {
+        "model": "text-embedding-3-small",
+        "api_key": "sk-or-v1-key",
+        "base_url": "https://openrouter.ai/api/v1",
+        "check_embedding_ctx_length": False,
+    }
+
+
+def test_missing_embedding_base_url_keeps_openai_default(monkeypatch):
+    captured = {}
+
+    def fake_embeddings(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(
+        "code_analysis.infra.adapters.s3_sqlite_rag_context_adapter.OpenAIEmbeddings",
+        fake_embeddings,
+    )
+
+    _adapter_with_base_url(None)._build_embeddings()
+
+    assert captured == {"model": "text-embedding-3-small", "api_key": "sk-or-v1-key"}

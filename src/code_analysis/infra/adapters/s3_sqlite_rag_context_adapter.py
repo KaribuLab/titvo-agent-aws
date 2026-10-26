@@ -37,12 +37,18 @@ class S3SqliteRagContextAdapter(IRagContextPort):
         embedding_provider: str | None,
         embedding_model: str | None,
         embedding_api_key: str | None,
+        embedding_base_url: str | None = None,
     ):
         self._s3 = s3_client
         self._bucket = bucket_name
         self._embedding_provider = embedding_provider
         self._embedding_model = embedding_model
         self._embedding_api_key = embedding_api_key
+        # Same `embedding_base_url` the rag-indexer resolves: the query vector
+        # must come from the same endpoint/model that built the index.
+        self._embedding_base_url = (
+            embedding_base_url.strip() if embedding_base_url else None
+        )
         self._repository_url: str | None = None
         self._branch: str | None = None
         self._db_path: str | None = None
@@ -161,10 +167,7 @@ class S3SqliteRagContextAdapter(IRagContextPort):
 
         try:
             if self._embeddings is None:
-                self._embeddings = OpenAIEmbeddings(
-                    model=self._embedding_model,
-                    api_key=self._embedding_api_key,
-                )
+                self._embeddings = self._build_embeddings()
             result = self._embeddings.embed_documents([text])
             return result[0] if result else None
         except Exception as exc:  # noqa: BLE001
@@ -180,6 +183,27 @@ class S3SqliteRagContextAdapter(IRagContextPort):
                 "Embedding generation failed — skipping RAG enrichment", exc_info=True
             )
             return None
+
+    def _build_embeddings(self) -> OpenAIEmbeddings:
+        """Mirror ``LangChainEmbeddingAdapter`` in the rag-indexer."""
+        endpoint_options: dict[str, Any] = {}
+        if self._embedding_base_url:
+            # Compatible providers expect text, not OpenAI-tokenized input.
+            endpoint_options = {
+                "base_url": self._embedding_base_url,
+                "check_embedding_ctx_length": False,
+            }
+        LOGGER.info(
+            "Using %s embeddings model=%s base_url=%s",
+            self._embedding_provider,
+            self._embedding_model,
+            self._embedding_base_url or "default",
+        )
+        return OpenAIEmbeddings(
+            model=self._embedding_model,
+            api_key=self._embedding_api_key,
+            **endpoint_options,
+        )
 
     def _query_db(
         self, db_path: str, embedding: list[float], k: int

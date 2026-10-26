@@ -280,6 +280,9 @@ async def main() -> int:
     embedding_provider = configuration_provider.get_value("embedding_provider")
     embedding_model = configuration_provider.get_value("embedding_model")
     embedding_api_key = configuration_provider.get_secret("embedding_api_key")
+    # Same key the rag-indexer reads, so agent queries hit the endpoint that
+    # built the index (e.g. an OpenAI-compatible provider instead of OpenAI).
+    embedding_base_url = configuration_provider.get_value("embedding_base_url")
     rag_node: Optional[RagRetrievalNode] = None
     if (
         not cli_source
@@ -294,9 +297,14 @@ async def main() -> int:
             embedding_provider=embedding_provider,
             embedding_model=embedding_model,
             embedding_api_key=embedding_api_key,
+            embedding_base_url=embedding_base_url,
         )
         rag_node = RagRetrievalNode(rag_context_adapter)
-        LOGGER.info("RAG context enrichment enabled (bucket=%s)", rag_indexer_bucket)
+        LOGGER.info(
+            "RAG context enrichment enabled (bucket=%s, embedding_base_url=%s)",
+            rag_indexer_bucket,
+            embedding_base_url or "default",
+        )
     else:
         LOGGER.warning(
             "RAG context enrichment disabled: missing bucket (%s) or embedding config",
