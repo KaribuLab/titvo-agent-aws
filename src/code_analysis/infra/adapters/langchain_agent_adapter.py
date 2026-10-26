@@ -1,4 +1,6 @@
 import logging
+import math
+import os
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +23,24 @@ from code_analysis.domain.ports.ia_agent import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+ENV_REQUEST_TIMEOUT = "TITVO_AI_REQUEST_TIMEOUT_SECONDS"
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0
+
+
+def _request_timeout_seconds() -> float:
+    """Resolve a finite per-request transport limit, never an SDK default/None."""
+    raw = os.getenv(ENV_REQUEST_TIMEOUT)
+    if raw is None:
+        return DEFAULT_REQUEST_TIMEOUT_SECONDS
+    message = f"{ENV_REQUEST_TIMEOUT} must be a finite positive number of seconds"
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(message) from None
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(message)
+    return value
 
 
 class AIProvider(Enum):
@@ -89,6 +109,7 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
 
     def create_model(self) -> BaseChatModel:
         provider = AIProvider.from_string(self._ai_provider)
+        timeout = _request_timeout_seconds()
         # Treat an empty string the same as unset, and only ever forward
         # https:// endpoints: ai_base_url ends up carrying ai_api_key in the
         # Authorization header, so a plain-http or malformed value would leak
@@ -117,6 +138,7 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                     base_url=base_url,
                     use_responses_api=False,
                     temperature=0,
+                    timeout=timeout,
                 )
             else:
                 model = ChatOpenAI(
@@ -124,6 +146,7 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                     api_key=self._ai_api_key,
                     use_responses_api=True,
                     temperature=0,
+                    timeout=timeout,
                 )
         elif provider == AIProvider.OPENROUTER:
             # OpenRouter is OpenAI-compatible but only supports Chat Completions,
@@ -134,6 +157,7 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                 base_url=base_url or "https://openrouter.ai/api/v1",
                 use_responses_api=False,
                 temperature=0,
+                timeout=timeout,
             )
         elif provider == AIProvider.ANTHROPIC:
             if base_url is not None:
@@ -142,10 +166,14 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                     api_key=self._ai_api_key,
                     base_url=base_url,
                     temperature=0,
+                    timeout=timeout,
                 )
             else:
                 model = ChatAnthropic(
-                    model=self._ai_model, api_key=self._ai_api_key, temperature=0
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    temperature=0,
+                    timeout=timeout,
                 )
         elif provider == AIProvider.GOOGLE:
             if base_url is not None:
@@ -154,10 +182,14 @@ class LangchainAgentModelFactory(AgentModelFactory[BaseChatModel]):
                     api_key=self._ai_api_key,
                     client_options={"api_endpoint": base_url},
                     temperature=0,
+                    timeout=timeout,  # Pinned Google RPC timeout is in seconds.
                 )
             else:
                 model = ChatGoogleGenerativeAI(
-                    model=self._ai_model, api_key=self._ai_api_key, temperature=0
+                    model=self._ai_model,
+                    api_key=self._ai_api_key,
+                    temperature=0,
+                    timeout=timeout,
                 )
 
         effective_temperature = getattr(model, "temperature", None)

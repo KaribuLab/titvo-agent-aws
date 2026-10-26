@@ -377,8 +377,8 @@ class BaseExpertNode(ABC):
             LOGGER.error(
                 "%s batch %d failed: %s",
                 self.expert_name,
-                batch.index,
-                exc,
+                batch.index + 1,
+                type(exc).__name__,
             )
             return _BatchOutcome(batch=batch, error=str(exc))
 
@@ -401,7 +401,14 @@ class BaseExpertNode(ABC):
                     self._batch_sources(batch),
                     self._config.batch_budget_chars,
                     context=self._format_batch(batch),
+                    batch_index=batch.index,
                 )
+        if result.error:
+            LOGGER.error(
+                "%s batch %d failed: invalid_response",
+                self.expert_name,
+                batch.index + 1,
+            )
         for issue in result.issues:
             chunk = self._resolve_chunk(issue, batch)
             issue.metadata = {
@@ -451,7 +458,7 @@ class BaseExpertNode(ABC):
                             "%s batch %d: non-retryable provider error; aborting "
                             "the remaining batches of every expert: %s",
                             self.expert_name,
-                            batch_index,
+                            batch_index + 1,
                             reason,
                         )
                     raise
@@ -459,7 +466,7 @@ class BaseExpertNode(ABC):
                     LOGGER.warning(
                         "%s batch %d rejected by the provider (%s); not retrying",
                         self.expert_name,
-                        batch_index,
+                        batch_index + 1,
                         describe(exc),
                     )
                     raise
@@ -469,10 +476,10 @@ class BaseExpertNode(ABC):
                 LOGGER.warning(
                     "%s batch %d attempt %d/%d failed (%s); retrying in %.1fs",
                     self.expert_name,
-                    batch_index,
+                    batch_index + 1,
                     attempt + 1,
                     self._config.max_attempts,
-                    exc,
+                    type(exc).__name__,
                     delay,
                 )
                 await asyncio.sleep(delay)
@@ -539,6 +546,7 @@ class BaseExpertNode(ABC):
         files: list[dict[str, str]],
         budget: int,
         context: str | None = None,
+        batch_index: int = 0,
     ) -> tuple[ParsedResponse, bool]:
         """Correct rejected records once, preserving IDs and valid findings."""
         payload = json.dumps(result.rejected, ensure_ascii=False)
@@ -589,7 +597,8 @@ The response envelope is repairs rather than issues for this correction call.
         unresolved = []
         try:
             response = await self._invoke_with_retry(
-                [SystemMessage(content=instruction), HumanMessage(content=message)], 0
+                [SystemMessage(content=instruction), HumanMessage(content=message)],
+                batch_index,
             )
             records = decode_response(response.content).get("repairs")
             if not isinstance(records, list):
@@ -626,6 +635,12 @@ The response envelope is repairs rather than issues for this correction call.
                     unresolved.append({**rejected, "reason": str(exc)})
             result.issues = accepted
         except Exception as exc:
+            LOGGER.error(
+                "%s batch %d repair failed: %s",
+                self.expert_name,
+                batch_index + 1,
+                type(exc).__name__,
+            )
             unresolved = [
                 {
                     **item,
