@@ -18,6 +18,7 @@ import logging
 import os
 import unicodedata
 from abc import ABC, abstractmethod
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -400,7 +401,6 @@ class BaseExpertNode(ABC):
                     result,
                     self._batch_sources(batch),
                     self._config.batch_budget_chars,
-                    context=self._format_batch(batch),
                     batch_index=batch.index,
                 )
         if result.error:
@@ -540,22 +540,20 @@ class BaseExpertNode(ABC):
     # Parsing
     # ------------------------------------------------------------------
 
-    async def _repair_response(
-        self,
-        result: ParsedResponse,
-        files: list[dict[str, str]],
-        budget: int,
-        context: str | None = None,
-        batch_index: int = 0,
-    ) -> tuple[ParsedResponse, bool]:
-        """Correct rejected records once, preserving IDs and valid findings."""
-        payload = json.dumps(result.rejected, ensure_ascii=False)
-        if len(payload) > 16000:
-            result.error += "; repair input exceeds 16000-character limit"
-            return result, False
+    def _repair_context(
+        self, files: list[dict[str, str]], rejected: list[dict], budget: int
+    ) -> str | None:
+        """Fit relevant originals, then whole-line evidence with absolute offsets."""
         selected = []
+        fragments = []
         for file in files:
-            for entry in result.rejected:
+            content = file["content"]
+            lines = content.splitlines(keepends=True)
+            offsets = [0]
+            for source_line in lines:
+                offsets.append(offsets[-1] + len(source_line))
+            ranges = []
+            for entry in rejected:
                 finding = entry["finding"]
                 if not isinstance(finding, dict):
                     continue
@@ -566,14 +564,76 @@ class BaseExpertNode(ABC):
                     else ""
                 )
                 code = finding.get("code")
-                if path == file["path"] or (
-                    isinstance(code, str) and code.strip() and code in file["content"]
-                ):
-                    selected.append(file)
-                    break
-        context = (
-            context if context is not None else self._format_files(selected or files)
-        )
+                evidence = isinstance(code, str) and code.strip() and code in content
+                if path != file["path"] and not evidence:
+                    continue
+                line = finding.get("line")
+                if evidence:
+                    # Prefer the reported occurrence when it already cites literal code.
+                    offset = (
+                        offsets[line - 1]
+                        if type(line) is int and 1 <= line <= len(lines)
+                        else 0
+                    )
+                    position = content.find(code, offset)
+                    if position < 0:
+                        position = content.index(code)
+                    start = bisect_right(offsets, position) - 1
+                    end = bisect_right(offsets, position + len(code) - 1)
+                elif type(line) is int and 1 <= line <= len(lines):
+                    start, end = line - 1, line
+                else:
+                    # Full relevant source may still support a missing code/line.
+                    start, end = 0, len(lines)
+                ranges.append((start, end))
+            if ranges:
+                selected.append(file)
+                fragments.append((file, lines, ranges))
+        if not selected:
+            selected = files
+        context = self._format_files(selected)
+        if len(context) <= budget:
+            return context
+        # Keep nearby evidence when possible; never cut characters within a line.
+        for margin in (3, 0):
+            chunks = []
+            for file, lines, ranges in fragments:
+                merged = []
+                for start, end in sorted(ranges):
+                    start, end = max(0, start - margin), min(len(lines), end + margin)
+                    if merged and start <= merged[-1][1]:
+                        merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+                    else:
+                        merged.append((start, end))
+                for start, end in merged:
+                    chunks.append(Chunk(
+                        path=file["path"],
+                        runtimes=tuple(file.get("runtimes") or ("unknown",)),
+                        body="".join(lines[start:end]),
+                        prefix="",
+                        start_line=start + 1,
+                        end_line=end,
+                        total_lines=len(lines),
+                        chunk_index=0,
+                        total_chunks=2,  # Explicit absolute coordinates for excerpts.
+                    ))
+            context = self._format_batch(Batch(index=0, chunks=tuple(chunks)))
+            if chunks and len(context) <= budget:
+                return context
+        return None
+
+    async def _repair_response(
+        self,
+        result: ParsedResponse,
+        files: list[dict[str, str]],
+        budget: int,
+        batch_index: int = 0,
+    ) -> tuple[ParsedResponse, bool]:
+        """Correct rejected records once, preserving IDs and valid findings."""
+        payload = json.dumps(result.rejected, ensure_ascii=False)
+        if len(payload) > 16000:
+            result.error += "; repair input exceeds 16000-character limit"
+            return result, False
         instruction = (
             ISSUE_CONTRACT
             + """
@@ -589,10 +649,14 @@ instead of issue. It will remain unresolved and coverage will be incomplete.
 The response envelope is repairs rather than issues for this correction call.
 """
         )
-        message = context + "\nREJECTED FINDINGS:\n" + payload
-        if len(instruction) + len(message) > budget:
+        suffix = "\nREJECTED FINDINGS:\n" + payload
+        context = self._repair_context(
+            files, result.rejected, budget - len(instruction) - len(suffix)
+        )
+        if context is None:
             result.error += "; repair context exceeds batch budget"
             return result, False
+        message = context + suffix
         attempted = True
         unresolved = []
         try:

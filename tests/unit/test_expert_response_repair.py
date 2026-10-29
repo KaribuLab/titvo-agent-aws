@@ -6,6 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from code_analysis.infra.adapters.langgraph.nodes.base_expert_node import (
+    ExpertRuntimeConfig,
+)
 from code_analysis.infra.adapters.langgraph.nodes.expert_nodes import (
     CodeVulnerabilitiesNode,
 )
@@ -187,6 +190,127 @@ async def test_oversized_invalid_response_does_not_trigger_unbounded_repair():
     output = await CodeVulnerabilitiesNode(provider)({"files": FILES, "issues": []})
     assert provider.ainvoke.await_count == 1
     assert "16000" in output["expert_errors"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("large_relevant", [False, True])
+@pytest.mark.parametrize("reported_path", ["src/app.py", "app.py", None])
+async def test_near_full_batch_repairs_with_relevant_bounded_source(
+    large_relevant, reported_path
+):
+    budget = 6500
+    padding = "# unrelated padding abcdefghijklmnopqrstuvwxyz\n" * 125
+    content = padding + FILES[0]["content"] if large_relevant else FILES[0]["content"]
+    files = [{"path": "src/app.py", "content": content}]
+    if not large_relevant:
+        files.append({"path": "src/unrelated.py", "content": padding})
+    expected = {**ISSUE, "line": 127 if large_relevant else 2}
+    invalid = {key: value for key, value in expected.items() if key != "category"}
+    if reported_path is None:
+        invalid.pop("path")
+    else:
+        invalid["path"] = reported_path
+    valid = {**expected, "title": "Keep original evidence"}
+    provider = model(
+        response({"issues": [valid, invalid]}),
+        response({"repairs": [{"source_id": 1, "issue": expected}]}),
+    )
+    config = ExpertRuntimeConfig(per_file_cap_chars=6500, batch_budget_chars=budget)
+    output = await CodeVulnerabilitiesNode(provider, config)({"files": files})
+    assert provider.ainvoke.await_count == 2
+    assert not output["expert_errors"]
+    assert not output["failed_batches"]
+    assert [
+        (i.title, i.path, i.line, i.code, i.severity) for i in output["issues"]
+    ] == [
+        (
+            "Keep original evidence", expected["path"], expected["line"],
+            expected["code"], expected["severity"],
+        ),
+        (
+            expected["title"], expected["path"], expected["line"],
+            expected["code"], expected["severity"],
+        ),
+    ]
+    metadata = output["expert_metadata"]["code_vulnerabilities"]
+    assert metadata["batches_completed"] == metadata["batches_repaired"] == 1
+    assert metadata["repair_attempts"] == 1
+    messages = provider.ainvoke.await_args.args[0]
+    assert sum(len(message.content) for message in messages) <= budget
+    assert "src/unrelated.py" not in messages[1].content
+    assert "name = input()\neval(name)" in messages[1].content
+    if large_relevant:
+        assert "of 127]" in messages[1].content
+        assert "absolute line number" in messages[1].content
+    final = MergeFindingsNode()(dict(output, scaned_files=len(files)))["final_output"]
+    assert final["coverage"]["complete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n", "\r"])
+async def test_compact_repair_keeps_all_ids_and_rejects_invented_evidence(line_ending):
+    content = line_ending.join(
+        ["# padding abcdefghijklmnopqrstuvwxyz"] * 145
+        + ["name = input()", "eval(name)", "exec(name)", ""]
+    )
+    first = {**ISSUE, "line": 147}
+    second = {**ISSUE, "title": "Untrusted exec", "code": "exec(name)", "line": 148}
+    invalid = [
+        {k: v for k, v in item.items() if k != "category"}
+        for item in (first, second)
+    ]
+    provider = model(
+        response({"issues": [first, *invalid]}),
+        response({
+            "repairs": [
+                {"source_id": 1, "issue": first},
+                {"source_id": 2, "issue": {**second, "code": "invented()"}},
+            ]
+        }),
+    )
+    config = ExpertRuntimeConfig(per_file_cap_chars=6500, batch_budget_chars=6500)
+    output = await CodeVulnerabilitiesNode(provider, config)(
+        {"files": [{"path": "src/app.py", "content": content}]}
+    )
+    assert provider.ainvoke.await_count == 2
+    messages = provider.ainvoke.await_args.args[0]
+    assert sum(len(message.content) for message in messages) <= 6500
+    context, payload = messages[1].content.split("\nREJECTED FINDINGS:\n")
+    assert [item["source_id"] for item in json.loads(payload)] == [1, 2]
+    assert line_ending.join(["name = input()", "eval(name)", "exec(name)"]) in context
+    assert "of 148]" in context
+    assert [(i.title, i.line, i.code) for i in output["issues"]] == [
+        (first["title"], first["line"], first["code"])
+    ]
+    assert "1 unresolved findings" in output["expert_errors"][0]
+    assert len(output["failed_batches"]) == 1
+    metadata = output["expert_metadata"]["code_vulnerabilities"]
+    assert metadata["repair_attempts"] == 1
+    assert metadata["batches_completed"] == metadata["batches_repaired"] == 0
+    final = MergeFindingsNode()(dict(output, scaned_files=1))["final_output"]
+    assert not final["coverage"]["complete"]
+
+
+@pytest.mark.asyncio
+async def test_unfittable_evidence_preserves_findings_and_incomplete_coverage():
+    content = FILES[0]["content"] + "x" * 6000 + "\n"
+    invalid = {**ISSUE, "line": 3, "code": "x" * 6000}
+    invalid.pop("category")
+    provider = model(response({"issues": [ISSUE, invalid]}))
+    config = ExpertRuntimeConfig(per_file_cap_chars=6500, batch_budget_chars=6500)
+    output = await CodeVulnerabilitiesNode(provider, config)(
+        {"files": [{"path": "src/app.py", "content": content}]}
+    )
+    assert provider.ainvoke.await_count == 1
+    assert [(i.title, i.line, i.code) for i in output["issues"]] == [
+        (ISSUE["title"], ISSUE["line"], ISSUE["code"])
+    ]
+    assert "repair context exceeds batch budget" in output["expert_errors"][0]
+    assert output["failed_batches"][0]["paths"] == ["src/app.py"]
+    metadata = output["expert_metadata"]["code_vulnerabilities"]
+    assert metadata["batches_completed"] == metadata["repair_attempts"] == 0
+    final = MergeFindingsNode()(dict(output, scaned_files=1))["final_output"]
+    assert not final["coverage"]["complete"]
 
 
 @pytest.mark.asyncio

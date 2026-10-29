@@ -93,6 +93,16 @@ segura/clase de excepción; los fallos de respuesta JSON se registran a nivel ER
 sin incluir código, claves, URLs ni respuestas crudas del proveedor. Estos logs
 son diagnósticos, no una prueba de la causa de un incidente en producción.
 
+### Reparación de hallazgos
+
+La única llamada de reparación reserva espacio para instrucciones y hallazgos
+rechazados dentro de `TITVO_EXPERT_BATCH_BUDGET_CHARS`. Usa los archivos relevantes;
+si no caben completos, envía fragmentos de líneas completas con coordenadas del
+archivo original. No aumenta el límite ni modifica la validación de evidencia.
+Si la evidencia necesaria tampoco cabe, conserva los hallazgos válidos y marca
+el lote y la cobertura como incompletos.
+Pruebas: `uv run pytest tests/unit/test_expert_response_repair.py -q`.
+
 ### Variables de entorno de los expertos
 
 | Variable | Default | Descripción |
