@@ -11,6 +11,7 @@ returns ``jobId`` and ``pollToolName``. Callers MUST poll
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -383,12 +384,42 @@ class MCPRetrievalNode:
         return jid if isinstance(jid, str) and jid.strip() else None
 
     def _extract_file_content(self, result: Any) -> str | None:
-        """Extract content from file read result."""
+        """Extract one file, decoding only the gateway's recognizable JSON DTO.
+
+        The locked adapter emits str for one text block and list[str] for many.
+        Multiple blocks have no reliable file identity or chunk ordering, so do
+        not concatenate them. Decode at most one transport layer: the returned
+        source may itself be JSON, including a DTO-shaped document.
+        """
+        if isinstance(result, list):
+            if len(result) != 1 or not isinstance(result[0], str):
+                return None
+            result = result[0]
+
+        if isinstance(result, str):
+            try:
+                parsed = json.loads(result)
+            except json.JSONDecodeError:
+                return result
+            # A content key alone is common in legitimate JSON source. Require
+            # exactly the known DTO fields and MIME-shaped transport metadata.
+            if not isinstance(parsed, dict) or set(parsed) != {
+                "content",
+                "contentType",
+            }:
+                return result
+            content_type = parsed["contentType"]
+            if not isinstance(content_type, str) or not re.fullmatch(
+                r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:;[^\r\n]*)?",
+                content_type,
+            ):
+                return result
+            content = parsed["content"]
+            return content if isinstance(content, str) else None
+
         if isinstance(result, dict):
-            if "content" in result:
-                return result["content"]
-            if "file_content" in result:
-                return result["file_content"]
-        elif isinstance(result, str):
-            return result
+            for key in ("content", "file_content"):
+                if key in result:
+                    content = result[key]
+                    return content if isinstance(content, str) else None
         return None
