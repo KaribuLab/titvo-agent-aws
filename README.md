@@ -63,7 +63,7 @@ verificación concreta.
 
 ### Timeout de espera del indexador RAG
 
-Antes de ejecutar un scan Git, cargar en la tabla seleccionada por
+Para ajustar el timeout de un scan Git, cargar en la tabla seleccionada por
 `TITVO_DYNAMO_CONFIGURATION_TABLE_NAME` el registro no secreto:
 
 ```json
@@ -71,9 +71,11 @@ Antes de ejecutar un scan Git, cargar en la tabla seleccionada por
 ```
 
 `value` es un string con segundos finitos positivos; `1800` equivale a 30 minutos
-por job. Se aceptan decimales. Si falta o es vacío, no numérico, no positivo,
-NaN o infinito, el scan falla antes de enviar jobs. No hay fallback en código ni
-override por variable de entorno. Los scans CLI omiten esta lectura.
+por job. Se aceptan decimales. Si falta o está vacío/solo espacios, se usan
+**600 segundos** y se registra el default, manteniendo compatibilidad con
+configuraciones antiguas. Valores no vacíos no numéricos, no positivos, NaN o
+infinito hacen fallar el scan antes de enviar jobs. Los errores de lectura se
+propagan. No hay override por entorno. Los scans CLI omiten esta lectura.
 
 El valor se lee una vez al iniciar el scan y se inyecta al caso de uso. Un cambio
 en la tabla afecta scans nuevos, sin redeploy. La indexación full inicial y el
@@ -89,8 +91,9 @@ El agente deja de esperar sin cancelar el indexador. Este plazo no modifica los
 límites externos de Batch ni los timeouts del modelo.
 
 El bootstrap local inserta `"600"` solo si falta la clave, conservando ajustes
-posteriores. Para ambientes existentes, cargar un valor operativo antes del
-rollout; para rollback, volver a la imagen anterior (que ignora la clave).
+posteriores. Para ambientes existentes, la clave es opcional gracias al default;
+configurar un plazo mayor para jobs largos. Para rollback, volver a la imagen
+anterior (que ignora la clave).
 
 Tests del cambio: `uv run pytest tests/unit/test_rag_timeout_configuration.py
 tests/unit/test_rag_indexing_deadline.py -q`. Smoke contra emulador local:

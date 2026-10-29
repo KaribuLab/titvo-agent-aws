@@ -10,10 +10,10 @@ from code_analysis.domain.entities.task_entity import TaskSource, TaskStatus
 
 
 @pytest.mark.parametrize(
-    "raw", [None, "", " ", "text", "0", "-1", "nan", "NaN", "inf", "-inf", "1e999"]
+    "raw", ["text", "0", "-1", "nan", "NaN", "inf", "-inf", "1e999"]
 )
 def test_invalid_timeout_fails_without_fallback(raw, monkeypatch):
-    """No environment variable rescues a missing or invalid table value."""
+    """No environment variable rescues an invalid nonblank table value."""
     monkeypatch.setenv("RAG_INDEXING_TIMEOUT_SECONDS", "1800")
     monkeypatch.setenv("TITVO_RAG_INDEXING_TIMEOUT_SECONDS", "1800")
     provider = MagicMock()
@@ -21,6 +21,20 @@ def test_invalid_timeout_fails_without_fallback(raw, monkeypatch):
     with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
         entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
     provider.get_value.assert_called_once_with("rag_indexing_timeout_seconds")
+
+
+@pytest.mark.parametrize("raw", [None, "", " \t\n "])
+def test_missing_or_blank_timeout_uses_historical_default(raw, monkeypatch, caplog):
+    """Old configurations retain ten minutes and log the fallback explicitly."""
+    monkeypatch.setenv("TITVO_RAG_INDEXING_TIMEOUT_SECONDS", "42")
+    provider = MagicMock()
+    provider.get_value.return_value = raw
+    with caplog.at_level("INFO", logger=entrypoint.__name__):
+        assert (
+            entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
+            == 600
+        )
+    assert "default: configuration absent or blank" in caplog.text
 
 
 @pytest.mark.parametrize("raw, expected", [("1800", 1800), (" 2.5 ", 2.5)])
@@ -136,15 +150,13 @@ async def test_main_reads_new_budget_for_each_scan(main_runtime):
 
 
 @pytest.mark.asyncio
-async def test_main_missing_budget_fails_before_job_setup(main_runtime):
-    """A missing budget prevents creation of the Git trigger and analysis graph."""
+async def test_main_missing_budget_injects_default(main_runtime):
+    """An older configuration can still construct and run a Git scan."""
     _, _, values, constructor = main_runtime
     del values["rag_indexing_timeout_seconds"]
-    with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
-        await entrypoint.main()
-    constructor.assert_not_called()
-    entrypoint.create_rag_indexer_batch_trigger.assert_not_called()
-    entrypoint.create_langgraph_agent.assert_not_awaited()
+    assert await entrypoint.main() == 0
+    assert constructor.call_args.kwargs["rag_indexing_timeout_seconds"] == 600
+    constructor.return_value.execute.assert_awaited_once_with("test")
 
 
 @pytest.mark.asyncio

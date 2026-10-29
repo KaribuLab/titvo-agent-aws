@@ -104,8 +104,9 @@ async def test_table_edit_affects_next_scan_only(
         TableName=table,
         Key={"parameter_id": {"S": "rag_indexing_timeout_seconds"}},
     )
-    with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
-        scan()
+    assert scan().rag_indexing_timeout_seconds == 600
+    write("  ")
+    assert scan().rag_indexing_timeout_seconds == 600
     assert read_rag_indexing_timeout_seconds(provider, cli_source=True) is None
     write("NaN")
     with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):

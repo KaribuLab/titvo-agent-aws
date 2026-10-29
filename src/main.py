@@ -67,6 +67,9 @@ dictConfig(config)
 
 LOGGER = logging.getLogger(__name__)
 
+# Preserve the historical ten-minute budget for configurations predating this key.
+DEFAULT_RAG_INDEXING_TIMEOUT_SECONDS = 600.0
+
 
 def _load_container_metadata() -> dict[str, Any]:
     """Load ECS container metadata when running under AWS Batch/ECS."""
@@ -103,11 +106,18 @@ def log_runtime_identity(task_id: str | None) -> None:
 def read_rag_indexing_timeout_seconds(
     configuration_provider: Any, *, cli_source: bool
 ) -> float | None:
-    """Read the required Git indexing budget; CLI snapshots never read this key."""
+    """Read the Git budget, defaulting absent/blank values; CLI skips this key."""
     if cli_source:
         return None
     key = "rag_indexing_timeout_seconds"
     raw = configuration_provider.get_value(key)
+    if raw is None or not str(raw).strip():
+        LOGGER.info(
+            "Using %s=%gs (default: configuration absent or blank)",
+            key,
+            DEFAULT_RAG_INDEXING_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_RAG_INDEXING_TIMEOUT_SECONDS
     try:
         value = float(str(raw).strip())
     except ValueError:
