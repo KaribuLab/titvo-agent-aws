@@ -50,6 +50,19 @@ mcp_retrieve → [rag_retrieve] → classify_runtime → 6 expertos en paralelo 
   invente o rebaje un hallazgo. Si hubo lotes fallidos el resultado incluye `incomplete` y el
   status nunca es `COMPLETED`; el reporte HTML muestra un banner de análisis incompleto.
 
+### Lectura de archivos MCP
+
+El lector acepta el DTO del gateway (`content` y `contentType`) serializado como
+texto JSON y decodifica una sola capa, conservando los saltos de línea del código.
+No desescapa texto arbitrario ni interpreta un campo `content` aislado como un
+contenedor. Un JSON que coincide exactamente con el DTO y tiene un MIME válido
+se interpreta como transporte; sin metadatos adicionales no es posible distinguirlo
+con certeza de un archivo con esa misma estructura.
+
+Respuestas con múltiples bloques de texto o contenido no textual no se concatenan
+ni se almacenan como código. Si no se puede leer ningún archivo, el scan falla.
+Pruebas: `uv run pytest tests/unit/test_mcp_content_envelope.py -q`.
+
 ### Prompts
 
 El `SystemMessage` de cada experto se compone en tiempo de ejecución como
