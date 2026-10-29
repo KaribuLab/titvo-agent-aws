@@ -1,6 +1,9 @@
+"""Compose and run the analysis agent with table-backed runtime configuration."""
+
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
 from logging.config import dictConfig
@@ -95,6 +98,26 @@ def log_runtime_identity(task_id: str | None) -> None:
         os.getenv("TITVO_AGENT_GIT_SHA"),
         os.getenv("TITVO_AGENT_IMAGE_DIGEST"),
     )
+
+
+def read_rag_indexing_timeout_seconds(
+    configuration_provider: Any, *, cli_source: bool
+) -> float | None:
+    """Read the required Git indexing budget; CLI snapshots never read this key."""
+    if cli_source:
+        return None
+    key = "rag_indexing_timeout_seconds"
+    raw = configuration_provider.get_value(key)
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        raise ValueError(
+            f"{key} must be configured as finite positive seconds"
+        ) from None
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{key} must be configured as finite positive seconds")
+    LOGGER.info("Using %s=%gs from configuration table", key, value)
+    return value
 
 
 def create_boto3_client(service_name: str) -> Any:
@@ -218,6 +241,9 @@ async def main() -> int:
 
     task = task_repository.get_task(task_id)
     cli_source = task.source == TaskSource.CLI
+    rag_indexing_timeout_seconds = read_rag_indexing_timeout_seconds(
+        configuration_provider, cli_source=cli_source
+    )
     mcp_server_url = configuration_provider.get_value("mcp_server_url")
     LOGGER.debug("MCP server url %s", mcp_server_url)
     if mcp_server_url is None and not cli_source:
@@ -345,6 +371,7 @@ async def main() -> int:
         notification_service=notification_service,
         rag_index_status=rag_index_status,
         rag_indexer_trigger=rag_indexer_trigger,
+        rag_indexing_timeout_seconds=rag_indexing_timeout_seconds,
     )
     task = await analyse_code_use_case.execute(task_id)
     exit_code = exit_code_for_task(task)

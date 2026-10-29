@@ -61,6 +61,47 @@ sospechas**: hallazgos no confirmables se reportan igual con título `Sospecha: 
 MEDIUM máximo (garantizado por código en `BaseExpertNode`) y una frase `Para confirmar: …` con la
 verificación concreta.
 
+### Timeout de espera del indexador RAG
+
+Antes de ejecutar un scan Git, cargar en la tabla seleccionada por
+`TITVO_DYNAMO_CONFIGURATION_TABLE_NAME` el registro no secreto:
+
+```json
+{"parameter_id": "rag_indexing_timeout_seconds", "value": "1800"}
+```
+
+`value` es un string con segundos finitos positivos; `1800` equivale a 30 minutos
+por job. Se aceptan decimales. Si falta o es vacío, no numérico, no positivo,
+NaN o infinito, el scan falla antes de enviar jobs. No hay fallback en código ni
+override por variable de entorno. Los scans CLI omiten esta lectura.
+
+El valor se lee una vez al iniciar el scan y se inyecta al caso de uso. Un cambio
+en la tabla afecta scans nuevos, sin redeploy. La indexación full inicial y el
+delta bloqueante de full scan reciben cada uno el plazo completo; el delta
+post-scan por commit no espera. Polling cada 10 segundos, con última espera
+acortada al restante y reloj monotónico. Un resultado observado a partir del
+deadline se rechaza; una consulta síncrona puede demorar su detección.
+
+Logs: `Waiting for indexing job <id> (timeout=1800s)` y
+`Indexing job <id> status: RUNNING (elapsed=610s, timeout=1800s)`.
+El `TimeoutError` incluye job ID, repositorio, rama/commit, elapsed y presupuesto.
+El agente deja de esperar sin cancelar el indexador. Este plazo no modifica los
+límites externos de Batch ni los timeouts del modelo.
+
+El bootstrap local inserta `"600"` solo si falta la clave, conservando ajustes
+posteriores. Para ambientes existentes, cargar un valor operativo antes del
+rollout; para rollback, volver a la imagen anterior (que ignora la clave).
+
+Tests del cambio: `uv run pytest tests/unit/test_rag_timeout_configuration.py
+tests/unit/test_rag_indexing_deadline.py -q`. Smoke contra emulador local:
+
+```bash
+TITVO_TEST_DYNAMODB_ENDPOINT=http://localhost:4566 uv run pytest tests/integration/test_rag_timeout_localstack.py -q --log-cli-level=INFO
+```
+
+El smoke usa tablas temporales, lectura DynamoDB real y estados Batch/reloj
+controlados, sin invocar modelos ni esperar minutos reales.
+
 ### Timeout por petición al modelo
 
 `TITVO_AI_REQUEST_TIMEOUT_SECONDS` define el timeout de transporte por petición

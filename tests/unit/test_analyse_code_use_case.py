@@ -13,7 +13,7 @@ class _Status:
     is_failed = False
 
 
-def _make_use_case(rag_status, rag_trigger):
+def _make_use_case(rag_status, rag_trigger, timeout=1800):
     return AnalyseCodeUseCase(
         task_repository=MagicMock(),
         agent=MagicMock(),
@@ -21,6 +21,7 @@ def _make_use_case(rag_status, rag_trigger):
         content_template="",
         rag_index_status=rag_status,
         rag_indexer_trigger=rag_trigger,
+        rag_indexing_timeout_seconds=timeout,
     )
 
 
@@ -166,6 +167,7 @@ async def test_execute_persists_incomplete_in_task_result(monkeypatch):
         content_template="{repository_url}{commit_hash}{branch}{rag_context}{args}{files_content}",
         rag_index_status=rag_status,
         rag_indexer_trigger=MagicMock(),
+        rag_indexing_timeout_seconds=1800,
     )
 
     await use_case.execute("task-1")
@@ -220,6 +222,7 @@ async def test_execute_mcp_error_marks_task_failed_instead_of_crashing():
         content_template="",
         rag_index_status=rag_status,
         rag_indexer_trigger=MagicMock(),
+        rag_indexing_timeout_seconds=1800,
     )
 
     await use_case.execute("task-1")
@@ -237,7 +240,7 @@ async def test_cli_bypasses_git_rag_and_keeps_coverage():
 
     from code_analysis.domain.entities.task_entity import Task, TaskSource, TaskStatus
 
-    use_case = _make_use_case(MagicMock(), MagicMock())
+    use_case = _make_use_case(MagicMock(), MagicMock(), timeout=None)
     task = Task(
         id="cli",
         result={},
@@ -371,6 +374,7 @@ async def test_failed_with_error_logs_cause(caplog):
         content_template="",
         rag_index_status=rag_status,
         rag_indexer_trigger=MagicMock(),
+        rag_indexing_timeout_seconds=1800,
     )
 
     with caplog.at_level("WARNING"):
