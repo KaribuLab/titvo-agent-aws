@@ -1,7 +1,11 @@
+"""Coordinate Git RAG readiness, code analysis and result persistence."""
+
 import asyncio
 import json
 import logging
+import math
 from datetime import datetime
+from time import monotonic
 from typing import Any, Dict
 
 from code_analysis.domain.dto.result_dto import AnalysisStatus, ResultDto
@@ -15,7 +19,6 @@ from rag_indexer_trigger.rag_indexer_batch_trigger import RagIndexerBatchTrigger
 LOGGER = logging.getLogger(__name__)
 
 _RAG_POLL_INTERVAL_S = 10
-_RAG_MAX_ATTEMPTS = 60
 _SCAN_MODE_COMMIT = "commit"
 _SCAN_MODE_FULL = "full"
 
@@ -30,6 +33,7 @@ class AnalyseCodeUseCase:
         notification_service (NotificationService): Servicio de notificaciones.
         rag_index_status (IRagIndexStatusPort): Consulta si el índice RAG existe.
         rag_indexer_trigger (RagIndexerBatchTrigger): Dispara jobs de indexación.
+        rag_indexing_timeout_seconds: Presupuesto por job desde la tabla; None para CLI.
     """
 
     def __init__(
@@ -40,13 +44,31 @@ class AnalyseCodeUseCase:
         content_template: str,
         rag_index_status: IRagIndexStatusPort | None,
         rag_indexer_trigger: RagIndexerBatchTrigger | None,
+        rag_indexing_timeout_seconds: float | None,
     ):
+        """Inject collaborators and the scan's configuration snapshot."""
         self.task_repository = task_repository
         self.agent = agent
         self.content_template = content_template
         self.notification_service = notification_service
         self.rag_index_status = rag_index_status
         self.rag_indexer_trigger = rag_indexer_trigger
+        self.rag_indexing_timeout_seconds = rag_indexing_timeout_seconds
+
+    def _require_rag_timeout(self) -> float:
+        """Reject missing/invalid Git budgets before submitting indexing jobs."""
+        value = self.rag_indexing_timeout_seconds
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+        ):
+            raise ValueError(
+                "rag_indexing_timeout_seconds must be configured "
+                "as finite positive seconds"
+            )
+        return value
 
     @staticmethod
     def _normalize_scan_mode(scan_mode: object) -> str:
@@ -57,16 +79,27 @@ class AnalyseCodeUseCase:
         return str(scan_mode)
 
     async def _wait_for_rag_job(self, job_id: str, repo_url: str, label: str) -> None:
-        for attempt in range(1, _RAG_MAX_ATTEMPTS + 1):
-            await asyncio.sleep(_RAG_POLL_INTERVAL_S)
+        """Wait within a per-job monotonic budget without cancelling the Batch job."""
+        timeout = self._require_rag_timeout()
+        started = monotonic()
+        deadline = started + timeout
+        LOGGER.info("Waiting for indexing job %s (timeout=%gs)", job_id, timeout)
+        while (remaining := deadline - monotonic()) > 0:
+            await asyncio.sleep(min(_RAG_POLL_INTERVAL_S, remaining))
+            if monotonic() >= deadline:
+                break
             status = self.rag_indexer_trigger.get_job_status(job_id)
+            now = monotonic()
             LOGGER.info(
-                "Indexing job %s status: %s (attempt %d/%d)",
+                "Indexing job %s status: %s (elapsed=%gs, timeout=%gs)",
                 job_id,
                 status.status,
-                attempt,
-                _RAG_MAX_ATTEMPTS,
+                now - started,
+                timeout,
             )
+            # A synchronous SDK call may return after the deadline: reject late results.
+            if now >= deadline:
+                break
             if status.is_succeeded:
                 LOGGER.info("RAG indexing completed for %s (%s)", repo_url, label)
                 return
@@ -76,8 +109,8 @@ class AnalyseCodeUseCase:
                 )
 
         raise TimeoutError(
-            f"RAG indexing timed out for {repo_url} ({label}) "
-            f"after {_RAG_MAX_ATTEMPTS * _RAG_POLL_INTERVAL_S}s"
+            f"RAG indexing job {job_id} timed out for {repo_url} ({label}): "
+            f"elapsed={monotonic() - started:g}s, timeout={timeout:g}s"
         )
 
     async def _ensure_branch_rag_index(self, repo_url: str, branch: str) -> None:
@@ -87,6 +120,7 @@ class AnalyseCodeUseCase:
         """
         if self.rag_index_status is None or self.rag_indexer_trigger is None:
             raise ValueError("Git scans require RAG configuration")
+        self._require_rag_timeout()
         if self.rag_index_status.is_indexed(repo_url, branch):
             LOGGER.info("RAG index already available for %s@%s", repo_url, branch)
             return
