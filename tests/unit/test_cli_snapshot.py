@@ -82,6 +82,104 @@ def test_symlinks_and_duplicate_paths_fail():
         read_snapshot(buffer.getvalue())
 
 
+@pytest.mark.parametrize("with_manifest", [False, True])
+def test_mixed_snapshot_excludes_binary_and_non_utf8(caplog, with_manifest):
+    """Unexpected uploads do not discard valid Unicode source or alter its lines."""
+    text = "# español\r\nprint('こんにちは')\n"
+    entries = [
+        ("src/app.py", text.encode()),
+        ("image.png", b"\x89PNG\r\n\x1a\n"),
+        ("binary.txt", b"secret\x00payload"),
+        ("latin1.py", b"# caf\xe9"),
+        ("empty.py", b""),
+    ]
+    if with_manifest:
+        manifest = {
+            "files": [
+                {
+                    "path": path,
+                    "size": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+                for path, data in entries
+            ]
+        }
+        entries.append((".titvo-manifest.json", json.dumps(manifest).encode()))
+    assert read_snapshot(archive(entries)) == [
+        {"path": "empty.py", "content": ""},
+        {"path": "src/app.py", "content": text},
+    ]
+    assert "image.png" in caplog.text
+    assert "latin1.py" in caplog.text
+    assert "binary.txt" in caplog.text
+    assert "NUL byte" in caplog.text
+    assert "not valid UTF-8" in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_excluded_binary_still_requires_valid_manifest():
+    """Filtering must never hide corruption in excluded content."""
+    manifest = {"files": [{"path": "image.png", "size": 4, "sha256": "wrong"}]}
+    with pytest.raises(ValueError, match="Snapshot integrity mismatch: image.png"):
+        read_snapshot(
+            archive(
+                [
+                    ("image.png", b"\x89PNG"),
+                    (".titvo-manifest.json", json.dumps(manifest).encode()),
+                ]
+            )
+        )
+
+
+def snapshot_repository(packages):
+    """Build the actual retrieval adapter with in-memory AWS responses."""
+    dynamodb = MagicMock()
+    dynamodb.query.return_value = {
+        "Items": [{"file_key": {"S": f"{i}.tar.gz"}} for i in range(len(packages))]
+    }
+    s3 = MagicMock()
+    s3.get_object.side_effect = [
+        {"Body": io.BytesIO(archive(entries))} for entries in packages
+    ]
+    return CliSnapshotRepository(s3, dynamodb, "bucket", "table")
+
+
+def test_binary_only_package_does_not_abort_other_packages():
+    """The batch, rather than each package, must contain analyzable files."""
+    repository = snapshot_repository(
+        [[("image.png", b"\x89PNG")], [("app.py", b"print(1)")]]
+    )
+    assert repository.get_files("batch") == [{"path": "app.py", "content": "print(1)"}]
+
+
+@pytest.mark.parametrize("second", [b"\x89PNG", b"valid text"])
+def test_cross_package_duplicate_excluded_path_fails(second):
+    """An excluded path cannot bypass cross-package duplicate validation."""
+    repository = snapshot_repository(
+        [[("same", b"\x89PNG")], [("same", second), ("app.py", b"print(1)")]]
+    )
+    with pytest.raises(ValueError, match="Duplicate CLI file: same"):
+        repository.get_files("batch")
+
+
+@pytest.mark.asyncio
+async def test_binary_only_batch_is_explicit_retrieval_failure():
+    """A batch with no text never becomes a successful zero-file scan."""
+    repository = snapshot_repository(
+        [[("image.png", b"\x89PNG")], [("data.bin", b"\x00abc")]]
+    )
+    result = await CliRetrievalNode(repository)({"extra_args": {"batch_id": "batch"}})
+    assert result["files"] == []
+    assert result["scaned_files"] == 0
+    assert "no analyzable UTF-8 text files" in result["mcp_error"]
+
+
+def test_empty_snapshot_still_fails():
+    """An actually empty package remains a malformed snapshot."""
+    with pytest.raises(ValueError, match="CLI snapshot contains no files"):
+        read_snapshot(archive([]))
+
+
 def test_repository_reads_every_query_page():
     dynamodb = MagicMock()
     dynamodb.query.side_effect = [

@@ -7,16 +7,23 @@ An optional manifest verifies that every selected UTF-8 file arrived unchanged.
 import hashlib
 import io
 import json
+import logging
 import tarfile
 from pathlib import PurePosixPath
 from typing import Any
 
 MANIFEST_PATH = ".titvo-manifest.json"
 MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024
+LOGGER = logging.getLogger(__name__)
 
 
 def read_snapshot(archive: bytes) -> list[dict[str, str]]:
-    """Validate paths, sizes and hashes before returning any snapshot files."""
+    """Validate a package and return only analyzable UTF-8 text files."""
+    return _text_files(_read_snapshot_entries(archive))
+
+
+def _read_snapshot_entries(archive: bytes) -> dict[str, bytes]:
+    """Validate all entries, including files later excluded from analysis."""
     files: dict[str, bytes] = {}
     total = 0
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
@@ -53,10 +60,23 @@ def read_snapshot(archive: bytes) -> list[dict[str, str]]:
                 raise ValueError(f"Snapshot integrity mismatch: {path}")
     if not files:
         raise ValueError("CLI snapshot contains no files")
-    return [
-        {"path": path, "content": data.decode("utf-8")}
-        for path, data in sorted(files.items())
-    ]
+    return files
+
+
+def _text_files(files: dict[str, bytes]) -> list[dict[str, str]]:
+    """Exclude NUL-containing or non-UTF-8 content without altering valid text."""
+    result = []
+    for path, data in sorted(files.items()):
+        if b"\x00" in data:
+            LOGGER.warning("Skipping CLI file %r: binary content (NUL byte)", path)
+            continue
+        try:
+            content = data.decode("utf-8")
+        except UnicodeDecodeError:
+            LOGGER.warning("Skipping CLI file %r: content is not valid UTF-8", path)
+            continue
+        result.append({"path": path, "content": content})
+    return result
 
 
 class CliSnapshotRepository:
@@ -88,6 +108,7 @@ class CliSnapshotRepository:
         if not keys:
             raise ValueError(f"No CLI files registered for batch {batch_id}")
         files = {}
+        seen_paths: set[str] = set()
         for key in sorted(keys):
             body = self.s3.get_object(Bucket=self.bucket, Key=key)["Body"]
             try:
@@ -96,8 +117,13 @@ class CliSnapshotRepository:
                 body.close()
             if len(archive) > MAX_SNAPSHOT_BYTES:
                 raise ValueError("CLI package exceeds 100 MiB compressed")
-            for file in read_snapshot(archive):
-                if file["path"] in files:
-                    raise ValueError(f"Duplicate CLI file: {file['path']}")
+            entries = _read_snapshot_entries(archive)
+            duplicates = seen_paths.intersection(entries)
+            if duplicates:
+                raise ValueError(f"Duplicate CLI file: {min(duplicates)}")
+            seen_paths.update(entries)
+            for file in _text_files(entries):
                 files[file["path"]] = file
+        if not files:
+            raise ValueError("CLI batch contains no analyzable UTF-8 text files")
         return [files[path] for path in sorted(files)]
