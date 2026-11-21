@@ -103,12 +103,8 @@ def log_runtime_identity(task_id: str | None) -> None:
     )
 
 
-def read_rag_indexing_timeout_seconds(
-    configuration_provider: Any, *, cli_source: bool
-) -> float | None:
-    """Read the Git budget, defaulting absent/blank values; CLI skips this key."""
-    if cli_source:
-        return None
+def read_rag_indexing_timeout_seconds(configuration_provider: Any) -> float:
+    """Read the RAG wait budget for Git and CLI scans; default absent/blank values."""
     key = "rag_indexing_timeout_seconds"
     raw = configuration_provider.get_value(key)
     if raw is None or not str(raw).strip():
@@ -252,7 +248,7 @@ async def main() -> int:
     task = task_repository.get_task(task_id)
     cli_source = task.source == TaskSource.CLI
     rag_indexing_timeout_seconds = read_rag_indexing_timeout_seconds(
-        configuration_provider, cli_source=cli_source
+        configuration_provider
     )
     mcp_server_url = configuration_provider.get_value("mcp_server_url")
     LOGGER.debug("MCP server url %s", mcp_server_url)
@@ -321,8 +317,7 @@ async def main() -> int:
     embedding_base_url = configuration_provider.get_value("embedding_base_url")
     rag_node: Optional[RagRetrievalNode] = None
     if (
-        not cli_source
-        and rag_indexer_bucket
+        rag_indexer_bucket
         and embedding_provider
         and embedding_model
         and embedding_api_key
@@ -337,8 +332,10 @@ async def main() -> int:
         )
         rag_node = RagRetrievalNode(rag_context_adapter)
         LOGGER.info(
-            "RAG context enrichment enabled (bucket=%s, embedding_base_url=%s)",
+            "RAG context enrichment enabled (bucket=%s, layout=%s, "
+            "embedding_base_url=%s)",
             rag_indexer_bucket,
+            "cli/latest" if cli_source else "branches",
             embedding_base_url or "default",
         )
     else:
@@ -371,8 +368,8 @@ async def main() -> int:
         ),
     )
 
-    rag_index_status = None if cli_source else create_s3_rag_index_status_adapter()
-    rag_indexer_trigger = None if cli_source else create_rag_indexer_batch_trigger()
+    rag_index_status = create_s3_rag_index_status_adapter()
+    rag_indexer_trigger = create_rag_indexer_batch_trigger()
 
     analyse_code_use_case = AnalyseCodeUseCase(
         task_repository=task_repository,

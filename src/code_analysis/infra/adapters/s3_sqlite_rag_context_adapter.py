@@ -51,6 +51,7 @@ class S3SqliteRagContextAdapter(IRagContextPort):
         )
         self._repository_url: str | None = None
         self._branch: str | None = None
+        self._index_layout: str = "branch"
         self._db_path: str | None = None
         self._embeddings: OpenAIEmbeddings | None = None
         # Set when the embedding provider rejected us for the whole scan (no
@@ -61,18 +62,35 @@ class S3SqliteRagContextAdapter(IRagContextPort):
     # IRagContextPort
     # ------------------------------------------------------------------
 
-    def configure(self, repository_url: str, branch: str) -> None:
-        """Set the repository and branch for this job."""
-        if self._repository_url != repository_url or self._branch != branch:
+    def configure(
+        self,
+        repository_url: str,
+        branch: str,
+        *,
+        index_layout: str = "branch",
+    ) -> None:
+        """Set the repository and branch (or CLI layout) for this job."""
+        layout = index_layout if index_layout in {"branch", "cli"} else "branch"
+        if (
+            self._repository_url != repository_url
+            or self._branch != branch
+            or self._index_layout != layout
+        ):
             # Different target — discard any cached download
             self.close()
         self._repository_url = repository_url
         self._branch = branch
+        self._index_layout = layout
         self._embeddings_disabled_reason = None
 
     def search(self, query: str, k: int) -> list[dict[str, Any]]:
         """Search for k most similar chunks. Returns [] on any error."""
-        if not self._repository_url or not self._branch:
+        if not self._repository_url:
+            LOGGER.warning(
+                "RAG adapter not configured (call configure() first) — skipping"
+            )
+            return []
+        if self._index_layout == "branch" and not self._branch:
             LOGGER.warning(
                 "RAG adapter not configured (call configure() first) — skipping"
             )
@@ -110,7 +128,12 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             return self._db_path
 
         repo_path = self._build_repo_path(self._repository_url)
-        key = f"{repo_path}/branches/{self._branch}/latest/index.db"
+        if self._index_layout == "cli":
+            key = f"{repo_path}/cli/latest/index.db"
+            label = "cli/latest"
+        else:
+            key = f"{repo_path}/branches/{self._branch}/latest/index.db"
+            label = f"{self._branch}"
 
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -131,9 +154,9 @@ class S3SqliteRagContextAdapter(IRagContextPort):
             code = exc.response.get("Error", {}).get("Code", "")
             if code in ("404", "NoSuchKey"):
                 LOGGER.info(
-                    "RAG index not found for %s@%s — skipping enrichment",
+                    "RAG index not found for %s (%s) — skipping enrichment",
                     self._repository_url,
-                    self._branch,
+                    label,
                 )
             else:
                 LOGGER.warning("S3 error downloading RAG index: %s", exc)

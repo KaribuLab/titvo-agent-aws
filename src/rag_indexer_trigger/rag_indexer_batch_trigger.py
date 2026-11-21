@@ -73,9 +73,47 @@ class RagIndexerBatchTrigger:
             environment=environment,
         )
 
+    def trigger_cli(self, repo_url: str, batch_id: str) -> str:
+        """Trigger CLI snapshot indexing (S3 temp batch → cli/latest/). No Git mode."""
+        if not batch_id:
+            raise ValueError("CLI batch_id is required")
+        job_name = f"rag-indexer-cli-{uuid.uuid4().hex[:8]}"
+        environment = self._build_cli_environment(repo_url=repo_url, batch_id=batch_id)
+        LOGGER.info(
+            "Triggering CLI RAG indexing: repo=%s, batch_id=%s, job=%s",
+            repo_url,
+            batch_id,
+            job_name,
+        )
+        return self._batch_service.submit_job(
+            job_name=job_name,
+            job_queue=self._job_queue,
+            job_definition=self._job_definition,
+            environment=environment,
+        )
+
     def get_job_status(self, job_id: str) -> JobStatusResponse:
         """Delegate status check to the underlying BatchService."""
         return self._batch_service.get_job_status(job_id)
+
+    def _localstack_environment(self) -> list:
+        if self._aws_stage != "localstack":
+            return []
+        env = [
+            {"name": "AWS_STAGE", "value": self._aws_stage},
+            {
+                "name": "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME",
+                "value": self._config_table_name,
+            },
+            {
+                "name": "TITVO_ENCRYPTION_KEY_NAME",
+                "value": self._encryption_key_name,
+            },
+            {"name": "TITVO_LOG_LEVEL", "value": self._log_level},
+        ]
+        if self._aws_endpoint:
+            env.append({"name": "AWS_ENDPOINT", "value": self._aws_endpoint})
+        return env
 
     def _build_environment(
         self,
@@ -89,23 +127,17 @@ class RagIndexerBatchTrigger:
         ]
         if commit_sha:
             env.append({"name": "TITVO_COMMIT_SHA", "value": commit_sha})
-        if self._aws_stage == "localstack":
-            env.append({"name": "AWS_STAGE", "value": self._aws_stage})
-            env.append(
-                {
-                    "name": "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME",
-                    "value": self._config_table_name,
-                }
-            )
-            env.append(
-                {
-                    "name": "TITVO_ENCRYPTION_KEY_NAME",
-                    "value": self._encryption_key_name,
-                }
-            )
-            env.append({"name": "TITVO_LOG_LEVEL", "value": self._log_level})
-            if self._aws_endpoint:
-                env.append({"name": "AWS_ENDPOINT", "value": self._aws_endpoint})
+        env.extend(self._localstack_environment())
+        return env
+
+    def _build_cli_environment(self, repo_url: str, batch_id: str) -> list:
+        """CLI jobs identify S3 temp origin; no TITVO_BRANCH / TITVO_COMMIT_SHA."""
+        env = [
+            {"name": "TITVO_SOURCE_TYPE", "value": "cli"},
+            {"name": "TITVO_SOURCE_BATCH_ID", "value": batch_id},
+            {"name": "TITVO_REPO_URL", "value": repo_url},
+        ]
+        env.extend(self._localstack_environment())
         return env
 
 

@@ -29,10 +29,14 @@ class MockRagContextPort(IRagContextPort):
         self._raise_on_search = raise_on_search
         self.configured_url = None
         self.configured_branch = None
+        self.configured_layout = "branch"
 
-    def configure(self, repository_url: str, branch: str) -> None:
+    def configure(
+        self, repository_url: str, branch: str, *, index_layout: str = "branch"
+    ) -> None:
         self.configured_url = repository_url
         self.configured_branch = branch
+        self.configured_layout = index_layout
 
     def search(self, query: str, k: int):
         if self._raise_on_search:
@@ -83,6 +87,18 @@ class TestRagRetrievalNode:
         assert len(result["rag_chunks"]) > 0
         assert mock_port.configured_url == "https://github.com/org/repo"
         assert mock_port.configured_branch == "main"
+        assert mock_port.configured_layout == "branch"
+
+    @pytest.mark.asyncio
+    async def test_cli_batch_uses_cli_index_layout(self, chunks):
+        mock_port = MockRagContextPort(search_results=chunks)
+        node = RagRetrievalNode(mock_port)
+        state = _make_state(
+            files=[{"path": "src/main.py", "content": "import auth"}],
+            extra_args={"batch_id": "batch-1"},
+        )
+        await node(state)
+        assert mock_port.configured_layout == "cli"
 
     @pytest.mark.asyncio
     async def test_empty_files_returns_empty_chunks(self):

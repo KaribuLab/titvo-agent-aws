@@ -19,7 +19,7 @@ def test_invalid_timeout_fails_without_fallback(raw, monkeypatch):
     provider = MagicMock()
     provider.get_value.return_value = raw
     with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
-        entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
+        entrypoint.read_rag_indexing_timeout_seconds(provider)
     provider.get_value.assert_called_once_with("rag_indexing_timeout_seconds")
 
 
@@ -30,10 +30,7 @@ def test_missing_or_blank_timeout_uses_historical_default(raw, monkeypatch, capl
     provider = MagicMock()
     provider.get_value.return_value = raw
     with caplog.at_level("INFO", logger=entrypoint.__name__):
-        assert (
-            entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
-            == 600
-        )
+        assert entrypoint.read_rag_indexing_timeout_seconds(provider) == 600
     assert "default: configuration absent or blank" in caplog.text
 
 
@@ -43,10 +40,7 @@ def test_valid_timeout_comes_from_table(raw, expected, monkeypatch):
     monkeypatch.setenv("TITVO_RAG_INDEXING_TIMEOUT_SECONDS", "42")
     provider = MagicMock()
     provider.get_value.return_value = raw
-    assert (
-        entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
-        == expected
-    )
+    assert entrypoint.read_rag_indexing_timeout_seconds(provider) == expected
     provider.get_secret.assert_not_called()
 
 
@@ -55,17 +49,15 @@ def test_provider_error_propagates():
     provider = MagicMock()
     provider.get_value.side_effect = RuntimeError("table unavailable")
     with pytest.raises(RuntimeError, match="table unavailable"):
-        entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=False)
+        entrypoint.read_rag_indexing_timeout_seconds(provider)
 
 
-def test_cli_does_not_read_timeout():
-    """CLI bypass applies even when reading this parameter would fail."""
+def test_cli_reads_timeout_like_git():
+    """CLI scans reuse the same table budget as Git (no bypass)."""
     provider = MagicMock()
-    provider.get_value.side_effect = AssertionError("must not read")
-    assert (
-        entrypoint.read_rag_indexing_timeout_seconds(provider, cli_source=True) is None
-    )
-    provider.get_value.assert_not_called()
+    provider.get_value.return_value = "900"
+    assert entrypoint.read_rag_indexing_timeout_seconds(provider) == 900
+    provider.get_value.assert_called_once_with("rag_indexing_timeout_seconds")
 
 
 @pytest.fixture
@@ -160,16 +152,27 @@ async def test_main_missing_budget_injects_default(main_runtime):
 
 
 @pytest.mark.asyncio
-async def test_main_cli_injects_none_without_reading_budget(main_runtime):
-    """The real composition path bypasses both config lookup and Git adapters."""
+async def test_main_cli_reads_budget_and_wires_rag_adapters(main_runtime):
+    """CLI composition enables timeout, trigger and status like Git."""
     task, provider, values, constructor = main_runtime
     task.source = TaskSource.CLI
-    values["rag_indexing_timeout_seconds"] = "invalid"
+    values["rag_indexing_timeout_seconds"] = "1200"
     assert await entrypoint.main() == 0
-    assert constructor.call_args.kwargs["rag_indexing_timeout_seconds"] is None
-    assert constructor.call_args.kwargs["rag_indexer_trigger"] is None
-    assert all(
-        call.args != ("rag_indexing_timeout_seconds",)
+    assert constructor.call_args.kwargs["rag_indexing_timeout_seconds"] == 1200
+    assert constructor.call_args.kwargs["rag_indexer_trigger"] is not None
+    assert constructor.call_args.kwargs["rag_index_status"] is not None
+    assert any(
+        call.args == ("rag_indexing_timeout_seconds",)
         for call in provider.get_value.call_args_list
     )
-    entrypoint.create_rag_indexer_batch_trigger.assert_not_called()
+    entrypoint.create_rag_indexer_batch_trigger.assert_called()
+    entrypoint.create_s3_rag_index_status_adapter.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_main_cli_rejects_invalid_budget(main_runtime):
+    task, _, values, _ = main_runtime
+    task.source = TaskSource.CLI
+    values["rag_indexing_timeout_seconds"] = "invalid"
+    with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
+        await entrypoint.main()

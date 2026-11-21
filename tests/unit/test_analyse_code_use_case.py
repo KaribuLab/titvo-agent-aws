@@ -232,15 +232,28 @@ async def test_execute_mcp_error_marks_task_failed_instead_of_crashing():
 
 
 @pytest.mark.asyncio
-async def test_cli_bypasses_git_rag_and_keeps_coverage():
-    """Uploaded working-tree snapshots must not consult a remote Git index."""
+async def test_cli_triggers_cli_rag_and_skips_git_paths(monkeypatch):
+    """CLI scans submit the CLI indexer job and never use branch/delta Git paths."""
     from datetime import datetime
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from code_analysis.domain.entities.task_entity import Task, TaskSource, TaskStatus
 
-    use_case = _make_use_case(MagicMock(), MagicMock(), timeout=None)
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(
+        "code_analysis.application.analyse_code_use_case.asyncio.sleep", _no_sleep
+    )
+
+    rag_status = MagicMock()
+    rag_status.is_cli_indexed.return_value = True
+    rag_trigger = MagicMock()
+    rag_trigger.trigger_cli.return_value = "cli-job-1"
+    rag_trigger.get_job_status.return_value = _Status()
+    use_case = _make_use_case(rag_status, rag_trigger, timeout=1800)
+    use_case.content_template = "{rag_context}"
     task = Task(
         id="cli",
         result={},
@@ -248,7 +261,7 @@ async def test_cli_bypasses_git_rag_and_keeps_coverage():
             "repository_url": "https://example.org/project",
             "commit_hash": "snapshot",
             "scan_mode": "full",
-            "batch_id": "batch",
+            "batch_id": "batch-42",
         },
         hint_id="project",
         scaned_files=0,
@@ -259,6 +272,7 @@ async def test_cli_bypasses_git_rag_and_keeps_coverage():
         branch="working-tree",
     )
     use_case.task_repository.get_task.return_value = task
+    use_case.task_repository.update_task.side_effect = lambda t: t
     use_case.agent.invoke = AsyncMock(
         return_value=SimpleNamespace(
             content='{"status":"COMPLETED","scaned_files":1,"issues":[],"coverage":{"complete":true}}'
@@ -266,10 +280,72 @@ async def test_cli_bypasses_git_rag_and_keeps_coverage():
     )
     use_case.notification_service.send_notifications.return_value = {}
     await use_case.execute("cli")
-    use_case.rag_index_status.is_indexed.assert_not_called()
-    use_case.rag_indexer_trigger.trigger_full.assert_not_called()
-    use_case.rag_indexer_trigger.trigger_delta.assert_not_called()
+    rag_trigger.trigger_cli.assert_called_once_with(
+        "https://example.org/project", "batch-42"
+    )
+    rag_trigger.get_job_status.assert_called_once_with("cli-job-1")
+    rag_status.is_indexed.assert_not_called()
+    rag_trigger.trigger_full.assert_not_called()
+    rag_trigger.trigger_delta.assert_not_called()
+    prompt = use_case.agent.invoke.await_args.args[0].content
+    assert "focus_files" in prompt
+    assert "cli/latest/" in prompt
+    assert "RAG disabled" not in prompt
     assert task.result["coverage"]["complete"]
+
+
+@pytest.mark.asyncio
+async def test_cli_prompt_without_index_omits_branch_rag(monkeypatch):
+    from datetime import datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from code_analysis.domain.entities.task_entity import Task, TaskSource, TaskStatus
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(
+        "code_analysis.application.analyse_code_use_case.asyncio.sleep", _no_sleep
+    )
+
+    rag_status = MagicMock()
+    rag_status.is_cli_indexed.return_value = False
+    rag_trigger = MagicMock()
+    rag_trigger.trigger_cli.return_value = "cli-job"
+    rag_trigger.get_job_status.return_value = _Status()
+    use_case = _make_use_case(rag_status, rag_trigger)
+    use_case.content_template = "{rag_context}"
+    task = Task(
+        id="cli",
+        result={},
+        args={
+            "repository_url": "https://example.org/project",
+            "commit_hash": "snapshot",
+            "batch_id": "b1",
+            "scan_mode": "full",
+        },
+        hint_id="project",
+        scaned_files=0,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        status=TaskStatus.PENDING,
+        source=TaskSource.CLI,
+        branch="working-tree",
+    )
+    use_case.task_repository.get_task.return_value = task
+    use_case.task_repository.update_task.side_effect = lambda t: t
+    use_case.agent.invoke = AsyncMock(
+        return_value=SimpleNamespace(
+            content='{"status":"COMPLETED","scaned_files":0,"issues":[]}'
+        )
+    )
+    use_case.notification_service.send_notifications.return_value = {}
+    await use_case.execute("cli")
+    prompt = use_case.agent.invoke.await_args.args[0].content
+    assert "focus_files" in prompt
+    assert "no CLI repository RAG index" in prompt
+    assert "branches/" not in prompt
 
 
 def _task_with(status, result):

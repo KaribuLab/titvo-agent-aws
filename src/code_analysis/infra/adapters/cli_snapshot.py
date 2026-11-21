@@ -2,19 +2,34 @@
 
 Archives are read in memory, never extracted onto the container filesystem.
 An optional manifest verifies that every selected UTF-8 file arrived unchanged.
+
+Batch objects are typed by key: ``*.tar.gz`` / snapshot packages are archives;
+``scan-manifest.json`` is JSON metadata and MUST NOT be opened as tar.
 """
+
+from __future__ import annotations
 
 import hashlib
 import io
 import json
 import logging
 import tarfile
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
 MANIFEST_PATH = ".titvo-manifest.json"
+SCAN_MANIFEST_SUFFIX = "scan-manifest.json"
 MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CliBatchSnapshot:
+    """Analyzable files plus optional sidecar scan-manifest metadata."""
+
+    files: list[dict[str, str]]
+    scan_manifest: dict[str, Any] | None
 
 
 def read_snapshot(archive: bytes) -> list[dict[str, str]]:
@@ -79,6 +94,48 @@ def _text_files(files: dict[str, bytes]) -> list[dict[str, str]]:
     return result
 
 
+def _is_scan_manifest_key(key: str) -> bool:
+    return key.endswith(SCAN_MANIFEST_SUFFIX)
+
+
+def _is_tar_key(key: str) -> bool:
+    return key.endswith(".tar.gz")
+
+
+def _parse_scan_manifest(body: bytes) -> dict[str, Any]:
+    """Parse sidecar JSON; reject non-objects so callers never treat it as tar."""
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Invalid scan-manifest.json: not valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid scan-manifest.json: expected a JSON object")
+    return payload
+
+
+def _apply_focus(
+    files: list[dict[str, str]], scan_manifest: dict[str, Any] | None
+) -> list[dict[str, str]]:
+    """Limit analysis to focus_files when non-empty; empty focus = all analyzable.
+
+    Deleted focus paths may be absent from the tar inventory; they are included
+    with empty content so experts can still reason about the path.
+    """
+    if not scan_manifest:
+        return files
+    focus = scan_manifest.get("focus_files") or []
+    if not focus:
+        return files
+    by_path = {item["path"]: item for item in files}
+    result: list[dict[str, str]] = []
+    for path in focus:
+        if path in by_path:
+            result.append(by_path[path])
+        else:
+            result.append({"path": path, "content": ""})
+    return result
+
+
 class CliSnapshotRepository:
     """Download registered CLI packages, including all DynamoDB query pages."""
 
@@ -88,8 +145,12 @@ class CliSnapshotRepository:
         self.bucket = bucket
         self.table = table
 
-    def get_files(self, batch_id: str) -> list[dict[str, str]]:
-        """Reject missing packages and duplicate paths instead of scanning partially."""
+    def get_batch(self, batch_id: str) -> CliBatchSnapshot:
+        """Reject missing packages and duplicate paths instead of scanning partially.
+
+        Object keys ending with ``scan-manifest.json`` are parsed as JSON sidecar
+        metadata. Keys ending with ``.tar.gz`` are validated as snapshot archives.
+        """
         if not batch_id:
             raise ValueError("CLI batch_id is required")
         query = {
@@ -107,23 +168,46 @@ class CliSnapshotRepository:
             query["ExclusiveStartKey"] = page["LastEvaluatedKey"]
         if not keys:
             raise ValueError(f"No CLI files registered for batch {batch_id}")
-        files = {}
+
+        files: dict[str, dict[str, str]] = {}
         seen_paths: set[str] = set()
+        scan_manifest: dict[str, Any] | None = None
+
         for key in sorted(keys):
             body = self.s3.get_object(Bucket=self.bucket, Key=key)["Body"]
             try:
-                archive = body.read(MAX_SNAPSHOT_BYTES + 1)
+                payload = body.read(MAX_SNAPSHOT_BYTES + 1)
             finally:
                 body.close()
-            if len(archive) > MAX_SNAPSHOT_BYTES:
+            if len(payload) > MAX_SNAPSHOT_BYTES:
                 raise ValueError("CLI package exceeds 100 MiB compressed")
-            entries = _read_snapshot_entries(archive)
+
+            if _is_scan_manifest_key(key):
+                if scan_manifest is not None:
+                    raise ValueError("Duplicate scan-manifest.json in CLI batch")
+                scan_manifest = _parse_scan_manifest(payload)
+                continue
+
+            if not _is_tar_key(key):
+                raise ValueError(
+                    f"Unsupported CLI batch object (expected .tar.gz or "
+                    f"scan-manifest.json): {key}"
+                )
+
+            entries = _read_snapshot_entries(payload)
             duplicates = seen_paths.intersection(entries)
             if duplicates:
                 raise ValueError(f"Duplicate CLI file: {min(duplicates)}")
             seen_paths.update(entries)
             for file in _text_files(entries):
                 files[file["path"]] = file
-        if not files:
+
+        analyzable = [files[path] for path in sorted(files)]
+        focused = _apply_focus(analyzable, scan_manifest)
+        if not focused:
             raise ValueError("CLI batch contains no analyzable UTF-8 text files")
-        return [files[path] for path in sorted(files)]
+        return CliBatchSnapshot(files=focused, scan_manifest=scan_manifest)
+
+    def get_files(self, batch_id: str) -> list[dict[str, str]]:
+        """Compatibility wrapper returning only analyzable/focus files."""
+        return self.get_batch(batch_id).files

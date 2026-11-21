@@ -185,3 +185,20 @@ def test_commit_delta_remains_fire_and_forget():
         "repo", "main", "abc"
     )
     case.rag_indexer_trigger.get_job_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cli_indexing_uses_table_timeout_budget(clock):
+    """CLI always submits a job and waits with the same table budget as Git."""
+    case = use_case(25)
+    case.rag_indexer_trigger.trigger_cli.return_value = "cli-job"
+    case.rag_indexer_trigger.get_job_status.side_effect = [
+        status("RUNNING"),
+        status("SUCCEEDED"),
+    ]
+    await case._ensure_cli_rag_index("https://example.org/repo", "batch-1")
+    case.rag_indexer_trigger.trigger_cli.assert_called_once_with(
+        "https://example.org/repo", "batch-1"
+    )
+    assert clock.sleeps == [10, 10]
+    assert clock.now == 1020
