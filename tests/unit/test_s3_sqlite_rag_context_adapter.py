@@ -148,7 +148,8 @@ def test_cli_layout_downloads_cli_latest_index():
     path = adapter._ensure_db()
     assert path is not None
     s3.download_file.assert_called_once()
-    assert s3.download_file.call_args.args[1] == "github.com/org/repo/cli/latest/index.db"
+    expected = "github.com/org/repo/cli/latest/index.db"
+    assert s3.download_file.call_args.args[1] == expected
     adapter.close()
 
 
