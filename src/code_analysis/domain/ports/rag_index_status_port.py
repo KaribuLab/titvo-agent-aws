@@ -13,3 +13,7 @@ class IRagIndexStatusPort(ABC):
         self, repository_url: str, branch: str, commit_sha: str
     ) -> bool:
         """Return True if the given commit is already indexed for the branch."""
+
+    @abstractmethod
+    def is_cli_indexed(self, repository_url: str) -> bool:
+        """Return True if ``cli/latest/meta.json`` exists for the repository."""

@@ -122,21 +122,48 @@ def test_notification_contract(source):
 
 @pytest.mark.asyncio
 async def test_cli_separates_policy_after_repository_validation():
+    import hashlib
+    import io
+    import json
+    import tarfile
     from unittest.mock import MagicMock
 
+    from code_analysis.infra.adapters.cli_snapshot import CliSnapshotRepository
     from code_analysis.infra.adapters.langgraph.nodes.cli_retrieval_node import (
         CliRetrievalNode,
     )
 
-    repository = MagicMock()
-    repository.get_files.return_value = [
-        {"path": ".titvoignore.yml", "content": POLICY},
-        {"path": "src/a.py", "content": "code"},
-    ]
+    # Use the current get_batch adapter contract, mocking only storage reads.
+    entries = [(".titvoignore.yml", POLICY.encode()), ("src/a.py", b"code")]
+    manifest = {
+        "version": 1,
+        "files": [
+            {"path": path, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            for path, data in entries
+        ],
+    }
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path, data in entries + [
+            (".titvo-manifest.json", json.dumps(manifest).encode())
+        ]:
+            member = tarfile.TarInfo(path)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+    dynamodb = MagicMock()
+    dynamodb.query.return_value = {
+        "Items": [{"file_key": {"S": "snapshot.tar.gz"}}]
+    }
+    s3 = MagicMock()
+    s3.get_object.return_value = {"Body": io.BytesIO(buffer.getvalue())}
+    repository = CliSnapshotRepository(s3, dynamodb, "bucket", "table")
     result = await CliRetrievalNode(repository)({"extra_args": {"batch_id": "batch"}})
     assert result["files"] == [{"path": "src/a.py", "content": "code"}]
     assert result["scaned_files"] == 1
     assert result["accepted_exceptions_text"] == POLICY
+    assert result["mcp_error"] is None
+    assert result["rag_chunks"] == []
+    s3.get_object.assert_called_once_with(Bucket="bucket", Key="snapshot.tar.gz")
 
 
 @pytest.mark.asyncio

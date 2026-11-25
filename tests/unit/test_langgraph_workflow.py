@@ -1090,7 +1090,7 @@ class TestLangGraphWorkflowWithRag:
     @pytest.fixture
     def mock_rag_port(self):
         class _MockPort(IRagContextPort):
-            def configure(self, repo, branch):
+            def configure(self, repo, branch, *, index_layout="branch"):
                 pass
 
             def search(self, query, k):

@@ -123,3 +123,56 @@ def test_missing_embedding_base_url_keeps_openai_default(monkeypatch):
     _adapter_with_base_url(None)._build_embeddings()
 
     assert captured == {"model": "text-embedding-3-small", "api_key": "sk-or-v1-key"}
+
+
+def test_cli_layout_downloads_cli_latest_index():
+    """CLI tasks read index.db from {repo}/cli/latest/, not branches/."""
+    s3 = MagicMock()
+
+    def fake_download(bucket, key, path):
+        assert key == "github.com/org/repo/cli/latest/index.db"
+        with open(path, "wb") as handle:
+            handle.write(b"sqlite")
+
+    s3.download_file.side_effect = fake_download
+    adapter = S3SqliteRagContextAdapter(
+        s3_client=s3,
+        bucket_name="bucket",
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_api_key="key",
+    )
+    adapter.configure(
+        "https://github.com/org/repo", "working-tree", index_layout="cli"
+    )
+    path = adapter._ensure_db()
+    assert path is not None
+    s3.download_file.assert_called_once()
+    expected = "github.com/org/repo/cli/latest/index.db"
+    assert s3.download_file.call_args.args[1] == expected
+    adapter.close()
+
+
+def test_branch_layout_downloads_branch_latest_index():
+    s3 = MagicMock()
+
+    def fake_download(bucket, key, path):
+        assert key == "github.com/org/repo/branches/main/latest/index.db"
+        with open(path, "wb") as handle:
+            handle.write(b"sqlite")
+
+    s3.download_file.side_effect = fake_download
+    adapter = S3SqliteRagContextAdapter(
+        s3_client=s3,
+        bucket_name="bucket",
+        embedding_provider="openai",
+        embedding_model="text-embedding-3-small",
+        embedding_api_key="key",
+    )
+    adapter.configure("https://github.com/org/repo", "main")
+    assert adapter._ensure_db() is not None
+    assert (
+        s3.download_file.call_args.args[1]
+        == "github.com/org/repo/branches/main/latest/index.db"
+    )
+    adapter.close()

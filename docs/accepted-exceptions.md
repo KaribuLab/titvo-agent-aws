@@ -6,7 +6,10 @@ not an authenticated approval. No administration UI is provided.
 The transport must include root `.titvoignore.yml` independently of selected source
 files, from the scan revision (Git) or working tree (CLI). CLI archives still undergo
 all existing path, manifest and hash validation before policy separation. The policy
-is never sent to experts or consolidation prompts.
+is never sent to experts or consolidation prompts. CLI retrieval separates and
+validates the exact root policy before applying `focus_files`; nested files named
+`.titvoignore.yml` remain ordinary source and follow the existing focus rules.
+This retrieval boundary does not establish exclusion from the external RAG index.
 
 ```yaml
 version: 1

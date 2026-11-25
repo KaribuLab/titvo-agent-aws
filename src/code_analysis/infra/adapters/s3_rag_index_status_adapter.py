@@ -40,6 +40,12 @@ class S3RagIndexStatusAdapter(IRagIndexStatusPort):
             "RAG commit index",
         )
 
+    def is_cli_indexed(self, repository_url: str) -> bool:
+        """Return True if cli/latest/meta.json exists for this repository."""
+        repo_path = self._build_repo_path(repository_url)
+        key = f"{repo_path}/cli/latest/meta.json"
+        return self._object_exists(key, repository_url, "cli/latest", "RAG CLI index")
+
     def _object_exists(
         self, key: str, repository_url: str, label: str, resource: str
     ) -> bool:

@@ -3,7 +3,6 @@
 import asyncio
 from typing import Any
 
-from code_analysis.domain.services.accepted_exceptions import separate_policy
 from code_analysis.infra.adapters.cli_snapshot import CliSnapshotRepository
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
@@ -15,11 +14,16 @@ class CliRetrievalNode:
         self.repository = repository
 
     async def __call__(self, state: AgentState) -> dict[str, Any]:
-        """Fail the entire retrieval if the uploaded snapshot is incomplete."""
+        """Fail the entire retrieval if the uploaded snapshot is incomplete.
+
+        Applies ``focus_files`` from ``scan-manifest.json`` when present
+        (non-empty focus → those paths only; empty focus → all analyzable).
+        """
         try:
             batch_id = state.get("extra_args", {}).get("batch_id", "")
-            files = await asyncio.to_thread(self.repository.get_files, batch_id)
-            files, policy = separate_policy(files)
+            batch = await asyncio.to_thread(self.repository.get_batch, batch_id)
+            files = batch.files
+            policy = batch.accepted_exceptions_text
             return {
                 **({"accepted_exceptions_text": policy} if policy is not None else {}),
                 "files": files,

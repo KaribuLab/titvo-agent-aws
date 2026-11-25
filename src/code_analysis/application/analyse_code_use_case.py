@@ -33,7 +33,7 @@ class AnalyseCodeUseCase:
         notification_service (NotificationService): Servicio de notificaciones.
         rag_index_status (IRagIndexStatusPort): Consulta si el índice RAG existe.
         rag_indexer_trigger (RagIndexerBatchTrigger): Dispara jobs de indexación.
-        rag_indexing_timeout_seconds: Presupuesto por job desde la tabla; None para CLI.
+        rag_indexing_timeout_seconds: Presupuesto por job desde la tabla (Git y CLI).
     """
 
     def __init__(
@@ -44,7 +44,7 @@ class AnalyseCodeUseCase:
         content_template: str,
         rag_index_status: IRagIndexStatusPort | None,
         rag_indexer_trigger: RagIndexerBatchTrigger | None,
-        rag_indexing_timeout_seconds: float | None,
+        rag_indexing_timeout_seconds: float,
     ):
         """Inject collaborators and the scan's configuration snapshot."""
         self.task_repository = task_repository
@@ -162,6 +162,44 @@ class AnalyseCodeUseCase:
         LOGGER.info("Delta indexing job submitted for full scan freshness: %s", job_id)
         await self._wait_for_rag_job(job_id, repo_url, f"{branch}@{commit_hash[:7]}")
 
+    async def _ensure_cli_rag_index(self, repo_url: str, batch_id: str) -> None:
+        """Always submit a CLI indexer job and wait (indexer no-ops if hashes equal)."""
+        if self.rag_index_status is None or self.rag_indexer_trigger is None:
+            raise ValueError("CLI scans require RAG configuration")
+        if not batch_id:
+            raise ValueError("CLI batch_id is required for RAG indexing")
+        self._require_rag_timeout()
+        LOGGER.info(
+            "Triggering CLI RAG indexing for %s (batch_id=%s)",
+            repo_url,
+            batch_id,
+        )
+        job_id = self.rag_indexer_trigger.trigger_cli(repo_url, batch_id)
+        LOGGER.info("CLI indexing job submitted: %s", job_id)
+        await self._wait_for_rag_job(job_id, repo_url, "cli/latest")
+
+    def _cli_rag_context(self, repo_url: str) -> str:
+        """Prompt text distinguishing snapshot/focus vs cli/latest corpus."""
+        has_index = False
+        if self.rag_index_status is not None:
+            try:
+                has_index = self.rag_index_status.is_cli_indexed(repo_url)
+            except Exception as exc:
+                LOGGER.warning(
+                    "Failed to check CLI RAG index for %s: %s", repo_url, exc
+                )
+        if has_index:
+            return (
+                "CLI analysis: the analysis focus comes from the uploaded snapshot "
+                "and focus_files in scan-manifest.json. Background RAG context comes "
+                "from the repository CLI index under cli/latest/ "
+                "(not a remote Git branch)."
+            )
+        return (
+            "CLI analysis: analyze the uploaded snapshot / focus_files only; "
+            "no CLI repository RAG index under cli/latest/ is available."
+        )
+
     def _trigger_delta_indexing(
         self, repo_url: str, branch: str, commit_hash: str
     ) -> None:
@@ -257,7 +295,11 @@ class AnalyseCodeUseCase:
         LOGGER.debug("Marking task %s as in progress", task_id)
 
         scan_mode = self._normalize_scan_mode(task.args.get("scan_mode"))
-        if task.source != TaskSource.CLI:
+        if task.source == TaskSource.CLI:
+            await self._ensure_cli_rag_index(
+                task.repository_url, str(task.args.get("batch_id") or "")
+            )
+        else:
             await self._ensure_rag_index(
                 task.repository_url, task.branch, task.commit_hash, scan_mode
             )
@@ -271,14 +313,13 @@ class AnalyseCodeUseCase:
             content_args += f"- {key}: {value}\n"
             LOGGER.debug("Adding argument: %s: %s", key, value)
 
-        rag_context = (
-            f"Note: The codebase for branch `{task.branch}` is indexed as background "
-            "context. The selected analysis files are retrieved via MCP tools."
-        )
-
         if task.source == TaskSource.CLI:
+            rag_context = self._cli_rag_context(task.repository_url)
+        else:
             rag_context = (
-                "CLI snapshot: RAG disabled; analyze uploaded working-tree files only."
+                f"Note: The codebase for branch `{task.branch}` is indexed as "
+                "background context. The selected analysis files are retrieved "
+                "via MCP tools."
             )
 
         message = AgentMessage(

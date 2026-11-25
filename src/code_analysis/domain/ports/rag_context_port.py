@@ -14,8 +14,17 @@ class IRagContextPort(ABC):
     """
 
     @abstractmethod
-    def configure(self, repository_url: str, branch: str) -> None:
+    def configure(
+        self,
+        repository_url: str,
+        branch: str,
+        *,
+        index_layout: str = "branch",
+    ) -> None:
         """Set the repository and branch to download the index from.
+
+        ``index_layout`` selects the S3 prefix: ``branch`` →
+        ``branches/{branch}/latest/``; ``cli`` → ``cli/latest/``.
 
         Must be called before search(). Safe to call multiple times with the
         same arguments (idempotent); re-configuring with different values

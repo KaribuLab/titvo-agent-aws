@@ -46,8 +46,13 @@ class RagRetrievalNode:
 
         repository_url = state.get("repository_url", "")
         branch = state.get("branch", "")
+        # CLI tasks carry batch_id; their corpus lives under cli/latest/, not branches/.
+        extra_args = state.get("extra_args") or {}
+        index_layout = "cli" if extra_args.get("batch_id") else "branch"
         try:
-            self._rag_context.configure(repository_url, branch)
+            self._rag_context.configure(
+                repository_url, branch, index_layout=index_layout
+            )
             chunks = self._retrieve_chunks(files)
             LOGGER.info("[RAG Node] Retrieved %d unique RAG chunks", len(chunks))
             return {"rag_chunks": chunks}
@@ -70,7 +75,7 @@ class RagRetrievalNode:
             if len(results) >= _MAX_CHUNKS_TOTAL:
                 break
 
-            query = self._build_file_query(file["path"], file["content"])
+            query = self._build_file_query(file["path"], file.get("content", ""))
             chunks = self._rag_context.search(query, k=_CHUNKS_PER_FILE)
 
             for chunk in chunks:

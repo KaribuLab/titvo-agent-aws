@@ -32,6 +32,19 @@ python src/main.py
 
 ## Pipeline de análisis
 
+### Archivos no analizables en snapshots CLI
+
+El agente valida rutas, tamaños y manifiestos antes de seleccionar contenido.
+Omite archivos con bytes NUL o UTF-8 inválido y registra un WARNING por ruta y
+motivo, sin incluir contenido. El texto válido conserva sus caracteres y líneas.
+La detección de rutas duplicadas incluye archivos excluidos, también entre paquetes.
+Un paquete solo binario no impide analizar el texto de otro paquete del mismo batch.
+Si todo el batch queda excluido, falla con `CLI batch contains no analyzable UTF-8 text files`;
+no genera un análisis exitoso vacío. Los errores de integridad siguen abortando el scan.
+La detección binaria usa NUL como heurística; no identifica todos los formatos binarios.
+
+### Flujo
+
 El agente ejecuta un grafo LangGraph:
 
 ```

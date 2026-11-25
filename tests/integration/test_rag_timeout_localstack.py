@@ -50,7 +50,7 @@ def configuration_table():
 async def test_table_edit_affects_next_scan_only(
     configuration_table, monkeypatch, caplog
 ):
-    """Exercise real reads, changing deadlines, missing config and CLI exemption."""
+    """Exercise real reads, changing deadlines, missing config and CLI budget."""
     client, table, provider = configuration_table
     clock = SimpleNamespace(now=0.0)
 
@@ -70,7 +70,7 @@ async def test_table_edit_affects_next_scan_only(
 
     def scan():
         """Construct a scan from a real table read with simulated job statuses."""
-        budget = read_rag_indexing_timeout_seconds(provider, cli_source=False)
+        budget = read_rag_indexing_timeout_seconds(provider)
         trigger = MagicMock()
         trigger.get_job_status.side_effect = [
             SimpleNamespace(status="RUNNING", is_succeeded=False, is_failed=False),
@@ -107,8 +107,11 @@ async def test_table_edit_affects_next_scan_only(
     assert scan().rag_indexing_timeout_seconds == 600
     write("  ")
     assert scan().rag_indexing_timeout_seconds == 600
-    assert read_rag_indexing_timeout_seconds(provider, cli_source=True) is None
+    # CLI reuses the same table budget (no bypass).
+    write("900")
+    assert read_rag_indexing_timeout_seconds(provider) == 900
     write("NaN")
     with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
         scan()
-    assert read_rag_indexing_timeout_seconds(provider, cli_source=True) is None
+    with pytest.raises(ValueError, match="rag_indexing_timeout_seconds"):
+        read_rag_indexing_timeout_seconds(provider)
