@@ -173,6 +173,12 @@ class MCPRetrievalNode:
 
             files_content = []
             for file_path in file_paths:
+                normalized_path = self._normalize_storage_path(file_path, storage_prefix)
+                # Match the same exact paths separated as policy below, not namesakes.
+                is_policy = normalized_path in (
+                    ".titvoignore.yml",
+                    f"{state['commit_hash']}/.titvoignore.yml",
+                )
                 try:
                     # Note: files tool only expects 'path' parameter
                     file_result = await files_tool.ainvoke(
@@ -182,10 +188,7 @@ class MCPRetrievalNode:
                     )
 
                     content = self._extract_file_content(file_result)
-                    if content is None and (
-                        file_path == ".titvoignore.yml"
-                        or file_path.endswith("/.titvoignore.yml")
-                    ):
+                    if content is None and is_policy:
                         raise ValueError("Could not read .titvoignore.yml")
                     if content is not None:
                         files_content.append(
@@ -197,10 +200,7 @@ class MCPRetrievalNode:
                             }
                         )
                 except Exception as e:
-                    if (
-                        file_path == ".titvoignore.yml"
-                        or file_path.endswith("/.titvoignore.yml")
-                    ):
+                    if is_policy:
                         raise ValueError("Could not read .titvoignore.yml") from e
                     LOGGER.warning("Failed to read file %s: %s", file_path, e)
                     # Continue with other files
