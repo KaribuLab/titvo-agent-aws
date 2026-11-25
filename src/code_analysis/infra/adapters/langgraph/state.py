@@ -43,6 +43,7 @@ class AgentState(TypedDict):
     # MCP phase results. Each file: {"path", "content"} plus "runtimes"
     # (ordered list of runtime labels) once classify_runtime has run.
     files: list[dict[str, Any]]
+    accepted_exceptions_text: NotRequired[str | None]
     scaned_files: int
     mcp_error: NotRequired[str | None]
 

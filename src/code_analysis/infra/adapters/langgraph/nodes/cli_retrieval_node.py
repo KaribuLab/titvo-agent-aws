@@ -23,7 +23,9 @@ class CliRetrievalNode:
             batch_id = state.get("extra_args", {}).get("batch_id", "")
             batch = await asyncio.to_thread(self.repository.get_batch, batch_id)
             files = batch.files
+            policy = batch.accepted_exceptions_text
             return {
+                **({"accepted_exceptions_text": policy} if policy is not None else {}),
                 "files": files,
                 "scaned_files": len(files),
                 "mcp_error": None,

@@ -40,12 +40,16 @@ class NotificationService:
                     code=issue.get("code"),
                     summary=issue.get("summary"),
                     recommendation=issue.get("recommendation"),
+                    category=issue.get("category"),
+                    acceptance=issue.get("acceptance"),
                 )
             )
         return normalized_issues
 
     def send_notifications(self, result_dto: ResultDto) -> Dict[str, Any]:
-        if result_dto.status == AnalysisStatus.COMPLETED.value:
+        if result_dto.status == AnalysisStatus.COMPLETED.value and not any(
+            issue.get("acceptance") for issue in result_dto.issues
+        ):
             return {}
         if result_dto.error:
             # FAILED caused by infrastructure (LLM provider down, MCP failure,

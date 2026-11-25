@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
+from code_analysis.domain.services.accepted_exceptions import POLICY_PATH, separate_policy
+
 MANIFEST_PATH = ".titvo-manifest.json"
 SCAN_MANIFEST_SUFFIX = "scan-manifest.json"
 MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024
@@ -26,10 +28,11 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CliBatchSnapshot:
-    """Analyzable files plus optional sidecar scan-manifest metadata."""
+    """Focused source, sidecar metadata and independently retrieved root policy."""
 
     files: list[dict[str, str]]
     scan_manifest: dict[str, Any] | None
+    accepted_exceptions_text: str | None = None
 
 
 def read_snapshot(archive: bytes) -> list[dict[str, str]]:
@@ -129,6 +132,9 @@ def _apply_focus(
     by_path = {item["path"]: item for item in files}
     result: list[dict[str, str]] = []
     for path in focus:
+        # Root policy is transport metadata, never a deleted-source placeholder.
+        if path == POLICY_PATH:
+            continue
         if path in by_path:
             result.append(by_path[path])
         else:
@@ -203,10 +209,15 @@ class CliSnapshotRepository:
                 files[file["path"]] = file
 
         analyzable = [files[path] for path in sorted(files)]
-        focused = _apply_focus(analyzable, scan_manifest)
+        sources, policy = separate_policy(analyzable)
+        focused = _apply_focus(sources, scan_manifest)
         if not focused:
             raise ValueError("CLI batch contains no analyzable UTF-8 text files")
-        return CliBatchSnapshot(files=focused, scan_manifest=scan_manifest)
+        return CliBatchSnapshot(
+            files=focused,
+            scan_manifest=scan_manifest,
+            accepted_exceptions_text=policy,
+        )
 
     def get_files(self, batch_id: str) -> list[dict[str, str]]:
         """Compatibility wrapper returning only analyzable/focus files."""

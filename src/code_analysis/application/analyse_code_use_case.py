@@ -376,6 +376,12 @@ class AnalyseCodeUseCase:
         notifications_results = self.notification_service.send_notifications(result_dto)
         # Keep counts in DynamoDB while the existing HTML report holds findings.
         result["issues_count"] = len(result.get("issues", []))
+        result["accepted_issues_count"] = sum(
+            1 for issue in result.get("issues", []) if issue.get("acceptance")
+        )
+        result["active_issues_count"] = (
+            result["issues_count"] - result["accepted_issues_count"]
+        )
         # Remove issues from result if exists
         if "issues" in result:
             result.pop("issues")

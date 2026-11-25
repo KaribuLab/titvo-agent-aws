@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1550,6 +1550,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langfuse" },
     { name = "pycryptodome" },
+    { name = "pyyaml" },
     { name = "sqlite-vec" },
 ]
 
@@ -1572,6 +1573,7 @@ requires-dist = [
     { name = "langchain-openai", specifier = ">=0.3.17" },
     { name = "langfuse", specifier = ">=3.8.0" },
     { name = "pycryptodome", specifier = ">=3.23.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sqlite-vec", specifier = ">=0.1.0" },
 ]
 

@@ -251,6 +251,58 @@ def test_deleted_focus_path_tolerates_missing_content():
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("focus", [[], ["src/app.py", "nested/.titvoignore.yml"]])
+async def test_root_policy_is_separate_even_when_excluded_from_focus(focus):
+    """Root transport metadata survives focus; nested namesakes remain source."""
+    policy = "version: 1\nexceptions: []\n"
+    entries = [
+        (".titvoignore.yml", policy.encode()),
+        ("nested/.titvoignore.yml", b"ordinary nested source"),
+        ("src/app.py", b"print(1)"),
+        ("src/background.py", b"background = True"),
+    ]
+    manifest = _scan_manifest(
+        scope="commit" if focus else "full",
+        focus_files=focus,
+        files=[
+            {
+                "path": path,
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+            for path, data in entries
+        ],
+    )
+    # Exercise both transport integrity and sidecar focus through the public node.
+    integrity_manifest = {"version": 1, "files": manifest["files"]}
+    repository = snapshot_repository(
+        [],
+        keys=["scan-manifest.json", "snapshot.tar.gz"],
+        bodies=[
+            json.dumps(manifest).encode(),
+            archive(entries + [
+                (".titvo-manifest.json", json.dumps(integrity_manifest).encode())
+            ]),
+        ],
+    )
+    result = await CliRetrievalNode(repository)({"extra_args": {"batch_id": "batch"}})
+    expected_files = [
+        {"path": path, "content": data.decode()}
+        for path, data in sorted(entries)
+        if path != ".titvoignore.yml" and (not focus or path in focus)
+    ]
+    if focus:
+        expected_files.sort(key=lambda item: focus.index(item["path"]))
+    assert result == {
+        "accepted_exceptions_text": policy,
+        "files": expected_files,
+        "scaned_files": len(expected_files),
+        "mcp_error": None,
+        "rag_chunks": [],
+    }
+
+
 def test_unknown_batch_object_type_fails():
     repository = snapshot_repository(
         [],
