@@ -20,6 +20,8 @@ class IssueDto:
     code: str
     summary: str
     recommendation: str
+    category: Optional[str] = None
+    acceptance: Optional[Dict[str, str]] = None
 
 
 @dataclass

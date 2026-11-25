@@ -3,6 +3,7 @@
 import asyncio
 from typing import Any
 
+from code_analysis.domain.services.accepted_exceptions import separate_policy
 from code_analysis.infra.adapters.cli_snapshot import CliSnapshotRepository
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
@@ -18,7 +19,9 @@ class CliRetrievalNode:
         try:
             batch_id = state.get("extra_args", {}).get("batch_id", "")
             files = await asyncio.to_thread(self.repository.get_files, batch_id)
+            files, policy = separate_policy(files)
             return {
+                **({"accepted_exceptions_text": policy} if policy is not None else {}),
                 "files": files,
                 "scaned_files": len(files),
                 "mcp_error": None,

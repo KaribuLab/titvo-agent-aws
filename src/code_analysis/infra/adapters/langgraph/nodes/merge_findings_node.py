@@ -26,6 +26,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from code_analysis.domain.entities.expert_result import ExpertIssue, normalize_code
+from code_analysis.domain.services.accepted_exceptions import apply_policy
 from code_analysis.domain.services.findings_merger import (
     FindingsMerger,
     max_severity,
@@ -91,6 +92,11 @@ class MergeFindingsNode:
                 l1_issues,
                 skip_reason="provider_unavailable" if provider_error else None,
             )
+            active_issues = apply_policy(
+                final_issues,
+                state.get("accepted_exceptions_text"),
+                state.get("commit_hash", ""),
+            )
             metrics = {
                 "l1_in": len(raw_issues),
                 "l1_out": len(l1_issues),
@@ -108,9 +114,9 @@ class MergeFindingsNode:
             elif provider_error:
                 status = "FAILED"
                 error_message = f"Proveedor LLM no disponible: {provider_error}"
-            elif any(i.severity in ("CRITICAL", "HIGH") for i in final_issues):
+            elif any(i.severity in ("CRITICAL", "HIGH") for i in active_issues):
                 status = "FAILED"
-            elif final_issues or incomplete:
+            elif active_issues or incomplete:
                 status = "WARNING"
             else:
                 status = "COMPLETED"
@@ -119,6 +125,8 @@ class MergeFindingsNode:
                 "status": status,
                 "scaned_files": scaned_files,
                 "issues": [issue.to_dict() for issue in final_issues],
+                "active_issues_count": len(active_issues),
+                "accepted_issues_count": len(final_issues) - len(active_issues),
             }
             result["coverage"] = {
                 "complete": not bool(

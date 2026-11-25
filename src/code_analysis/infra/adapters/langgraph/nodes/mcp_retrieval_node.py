@@ -16,6 +16,7 @@ from typing import Any
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from code_analysis.domain.services.accepted_exceptions import separate_policy
 from code_analysis.infra.adapters.langgraph.state import AgentState
 
 LOGGER = logging.getLogger(__name__)
@@ -181,6 +182,11 @@ class MCPRetrievalNode:
                     )
 
                     content = self._extract_file_content(file_result)
+                    if content is None and (
+                        file_path == ".titvoignore.yml"
+                        or file_path.endswith("/.titvoignore.yml")
+                    ):
+                        raise ValueError("Could not read .titvoignore.yml")
                     if content is not None:
                         files_content.append(
                             {
@@ -191,6 +197,11 @@ class MCPRetrievalNode:
                             }
                         )
                 except Exception as e:
+                    if (
+                        file_path == ".titvoignore.yml"
+                        or file_path.endswith("/.titvoignore.yml")
+                    ):
+                        raise ValueError("Could not read .titvoignore.yml") from e
                     LOGGER.warning("Failed to read file %s: %s", file_path, e)
                     # Continue with other files
 
@@ -208,7 +219,14 @@ class MCPRetrievalNode:
                     "files": [],
                 }
 
+            # Commit-mode transports may retain the commit storage prefix.
+            for file in files_content:
+                prefix = f"{state['commit_hash']}/"
+                if file["path"] == prefix + ".titvoignore.yml":
+                    file["path"] = ".titvoignore.yml"
+            files_content, policy = separate_policy(files_content)
             return {
+                **({"accepted_exceptions_text": policy} if policy is not None else {}),
                 "files": files_content,
                 "scaned_files": len(files_content),
                 "mcp_error": None,
