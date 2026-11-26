@@ -42,18 +42,18 @@ def test_trigger_cli_builds_cli_environment_without_git_mode():
     assert "TITVO_COMMIT_SHA" not in env
 
 
-def test_trigger_cli_includes_localstack_env():
+def test_trigger_cli_includes_local_env():
     batch = MagicMock()
     batch.submit_job.return_value = "job-ls"
     trigger = _trigger(
         batch_service=batch,
-        aws_stage="localstack",
+        aws_stage="local",
         aws_endpoint="http://localhost:4566",
     )
 
     trigger.trigger_cli("https://example.org/r", "b1")
     env = _env_map(batch.submit_job.call_args.kwargs["environment"])
-    assert env["AWS_STAGE"] == "localstack"
+    assert env["AWS_STAGE"] == "local"
     assert env["AWS_ENDPOINT"] == "http://localhost:4566"
     assert env["TITVO_SOURCE_TYPE"] == "cli"
     assert "TITVO_BRANCH" not in env

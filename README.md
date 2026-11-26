@@ -22,7 +22,7 @@ CONTENT_TEMPLATE=<content_template>
 IA_PROVIDER=<ia_provider>
 IA_MODEL=<ia_model>
 IA_API_KEY=<ia_api_key>
-# Localstack
+# MiniStack
 AWS_ENDPOINT=http://localhost:4566
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=dummy
@@ -125,7 +125,7 @@ Tests del cambio: `uv run pytest tests/unit/test_rag_timeout_configuration.py
 tests/unit/test_rag_indexing_deadline.py -q`. Smoke contra emulador local:
 
 ```bash
-TITVO_TEST_DYNAMODB_ENDPOINT=http://localhost:4566 uv run pytest tests/integration/test_rag_timeout_localstack.py -q --log-cli-level=INFO
+TITVO_TEST_DYNAMODB_ENDPOINT=http://localhost:4566 uv run pytest tests/integration/test_rag_timeout_ministack.py -q --log-cli-level=INFO
 ```
 
 El smoke usa tablas temporales, lectura DynamoDB real y estados Batch/reloj

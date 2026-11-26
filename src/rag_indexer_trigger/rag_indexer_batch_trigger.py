@@ -96,8 +96,8 @@ class RagIndexerBatchTrigger:
         """Delegate status check to the underlying BatchService."""
         return self._batch_service.get_job_status(job_id)
 
-    def _localstack_environment(self) -> list:
-        if self._aws_stage != "localstack":
+    def _local_environment(self) -> list:
+        if self._aws_stage != "local":
             return []
         env = [
             {"name": "AWS_STAGE", "value": self._aws_stage},
@@ -127,7 +127,7 @@ class RagIndexerBatchTrigger:
         ]
         if commit_sha:
             env.append({"name": "TITVO_COMMIT_SHA", "value": commit_sha})
-        env.extend(self._localstack_environment())
+        env.extend(self._local_environment())
         return env
 
     def _build_cli_environment(self, repo_url: str, batch_id: str) -> list:
@@ -137,7 +137,7 @@ class RagIndexerBatchTrigger:
             {"name": "TITVO_SOURCE_BATCH_ID", "value": batch_id},
             {"name": "TITVO_REPO_URL", "value": repo_url},
         ]
-        env.extend(self._localstack_environment())
+        env.extend(self._local_environment())
         return env
 
 
@@ -146,9 +146,9 @@ def create_rag_indexer_batch_trigger() -> RagIndexerBatchTrigger:
     from rag_indexer_trigger.batch_service import create_batch_service
 
     aws_stage = os.getenv("AWS_STAGE", "")
-    is_localstack = aws_stage == "localstack"
+    is_local = aws_stage == "local"
 
-    if is_localstack:
+    if is_local:
         job_queue = ""
         job_definition = ""
     else:

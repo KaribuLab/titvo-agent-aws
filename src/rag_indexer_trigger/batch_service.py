@@ -1,7 +1,7 @@
 """BatchService — submits and queries AWS Batch jobs.
 
 Supports two modes:
-- localstack: HTTP calls to the batch-runner sidecar service.
+- local: HTTP calls to the batch-runner sidecar service.
 - AWS: native boto3 Batch client.
 
 The HTTP batch-runner API mirrors the TypeScript batch.service.ts implementation:
@@ -59,7 +59,7 @@ class BatchService:
         environment: List[Dict[str, str]],
         image_name: str = "titvo/rag-indexer",
         container_name: str = "titvo-rag-indexer-local",
-        network_mode: str = "titvo-dev_localstack",
+        network_mode: str = "titvo-dev_local",
     ) -> str:
         """Submit a batch job and return the job ID."""
         if self._runner_url is not None:
@@ -177,19 +177,19 @@ def create_batch_service(
 ) -> BatchService:
     """Factory that selects the appropriate BatchService implementation.
 
-    - localstack: uses the HTTP batch-runner (URL from argument or
+    - local: uses the HTTP batch-runner (URL from argument or
       TITVO_BATCH_RUNNER_URL env var, defaulting to http://rag-indexer:3002).
     - AWS: uses native boto3 Batch client.
     """
     stage = aws_stage or os.getenv("AWS_STAGE", "")
-    if stage == "localstack":
+    if stage == "local":
         runner_url = (
             batch_runner_url
             or os.getenv("TITVO_BATCH_RUNNER_URL")
             or "http://rag-indexer:3002"
         )
         LOGGER.info(
-            "Using batch-runner at %s for localstack (hostname: %s)",
+            "Using batch-runner at %s for local (hostname: %s)",
             runner_url,
             runner_url.replace("http://", "").replace("https://", "").split(":")[0],
         )

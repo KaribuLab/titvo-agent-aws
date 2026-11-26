@@ -22,7 +22,7 @@ LOGGER = logging.getLogger(__name__)
 
 GIT_COMMIT_POLL_TOOL = "mcp.tool.git.commit-files.poll"
 POLL_INTERVAL_SEC = 1.0
-POLL_MAX_ATTEMPTS = 180  # hasta ~3 min (Lambda/SQS en LocalStack pueden ir lentos)
+POLL_MAX_ATTEMPTS = 180  # hasta ~3 min (Lambda/SQS en MiniStack pueden ir lentos)
 
 
 class MCPRetrievalNode:
